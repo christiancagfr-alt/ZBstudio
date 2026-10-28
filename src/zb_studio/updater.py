@@ -131,7 +131,9 @@ def _safe_extract(archive: Path, destination: Path) -> None:
 def install_update(package: Path) -> str:
     """Start platform installer only after the package hash was verified."""
     if sys.platform == "win32":
-        os.startfile(str(package))  # noqa: S606 - verified local installer; user initiated
+        # Inno Setup asks the Restart Manager to close this verified old app
+        # before replacing its files; the GUI exits immediately after launch.
+        os.startfile(str(package), "open", "/CLOSEAPPLICATIONS")  # noqa: S606 - verified local installer; user initiated
         return "Windows 安装程序已启动，请按安装向导完成更新。"
     if sys.platform == "darwin":
         with subprocess.Popen(["hdiutil", "attach", "-plist", "-nobrowse", "-readonly", str(package)], stdout=subprocess.PIPE, stderr=subprocess.PIPE) as mount:
