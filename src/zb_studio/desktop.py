@@ -18,6 +18,8 @@ from .thumbnails import Thumbnails,Thumbnail
 from .theme import STYLE
 from .native_icons import icon
 from .source_settings import suggest_alias,merge_sources
+from .version import APP_VERSION
+from . import updater
 
 
 class Worker(QThread):
@@ -52,7 +54,7 @@ class Window(QMainWindow):
     def __init__(self,cfg=None):
         super().__init__();self.cfg=cfg or load_settings();self.tasks=[];self.jobs=[];self.paths=[];self.mine=False;self.group_filter=None;self.group_cards={}
         self.network=QNetworkAccessManager(self);self.thumbnails=Thumbnails(self)
-        self.setWindowTitle('ZB Studio · 原生桌面预览');self.resize(1280,800);self.setMinimumSize(920,600);self.setAcceptDrops(True)
+        self.setWindowTitle(f'ZB Studio · V{APP_VERSION}');self.resize(1280,800);self.setMinimumSize(920,600);self.setAcceptDrops(True)
         root=QWidget();root.setObjectName('workspace');self.setCentralWidget(root);layout=QVBoxLayout(root);layout.setContentsMargins(0,0,0,0);layout.setSpacing(0)
         logo_path=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parents[2]))/'zb_workflow_logo.svg'
         self.setWindowIcon(QIcon(str(logo_path)))
@@ -71,7 +73,7 @@ class Window(QMainWindow):
         self.nav_buttons[0][0].setChecked(True);self.nav_buttons[0][0].setIcon(icon('home','#ffffff'))
         nav.addStretch()
         for link in self.sheet_links:nav.addWidget(link)
-        foot=QLabel('ZB STUDIO\n桌面工作台 · V0.5.0');foot.setObjectName('muted');nav.addWidget(foot)
+        foot=QLabel(f'ZB STUDIO\n桌面工作台 · V{APP_VERSION}');foot.setObjectName('muted');nav.addWidget(foot)
         self.statusBar().showMessage('先在系统设置导入 Google 桌面授权文件并配置工作表。')
     def build_activity(self):
         page=QWidget();v=QVBoxLayout(page);v.setContentsMargins(20,18,20,18)
@@ -314,7 +316,7 @@ class Window(QMainWindow):
         else:
             for name in self.cfg.source_sheets:self.add_source(name,self.cfg.requester_names.get(name) or suggest_alias(name),True)
         self.sources.itemChanged.connect(self.update_source_summary);self.update_source_summary();v.addWidget(self.sources)
-        notice=QLabel('例如：🧸辛一-佳佳-经营专业 → 辛一。只读取勾选项；再次刷新会保留手动别名。');notice.setObjectName('notice');notice.setWordWrap(True);v.addWidget(notice)
+        notice=QLabel('例如：需求者-制作人-业务分类 → 需求者。只读取勾选项；再次刷新会保留手动别名。');notice.setObjectName('notice');notice.setWordWrap(True);v.addWidget(notice)
         v=panel('制作与文件','个人制作配置','配置制作人及唯一制作工作表，指定素材和成品的存放位置。')
         for key,label in [('producer','制作人姓名'),('production_sheet','制作 Sheet 名称'),('production_spreadsheet_id','制作表 Spreadsheet ID'),('prefix','命名前缀'),('download_path','素材下载根目录'),('drive_parent_folder_id','Drive 父文件夹 ID')]:field(v,key,label)
         self.production_layout=QComboBox();self.production_layout.addItem('按人物分组追加','grouped');self.production_layout.addItem('左侧第一组（自动识别列宽） 顶部插入（最新领取在上）','left_al');self.production_layout.setCurrentIndex(self.production_layout.findData(self.cfg.production_layout));v.addWidget(QLabel('制作表写入方式'));v.addWidget(self.production_layout)
@@ -324,7 +326,7 @@ class Window(QMainWindow):
         self.auth_label=QLabel('尚未检查授权状态');self.auth_label.setObjectName('notice');v.addWidget(self.auth_label);bar=QHBoxLayout()
         for text,fn in [('导入授权文件',self.import_auth),('Google 授权',self.authorize),('检查授权',self.auth_status),('清除本机登录',self.disconnect)]:bar.addWidget(button(text,fn))
         v.addLayout(bar)
-        v=panel('组件与更新','运行环境','查看运行组件与版本。内置组件通过完整软件包更新。')
+        v=panel('组件与更新','运行环境','检查 GitHub Release。更新包下载后先校验 SHA-256，再启动对应系统的安装流程。')
         self.components=table(['组件','版本','状态']);self.components.setMinimumHeight(350);self.components.setColumnWidth(0,260);self.components.setColumnWidth(1,240);v.addWidget(self.components)
         bar=QHBoxLayout();bar.addWidget(button('检查组件',self.check_components));bar.addWidget(button('安装 / 修复组件',self.repair));bar.addWidget(button('检查更新',self.update_info));v.addLayout(bar)
         footer=QHBoxLayout();hint=QLabel('保存后生效 · 不会修改已领取任务的命名');hint.setObjectName('muted');footer.addWidget(hint);footer.addStretch();footer.addWidget(button('保存设置',self.save,True));outer.addLayout(footer)
@@ -403,7 +405,36 @@ class Window(QMainWindow):
     def check_components(self):fill(self.components,inspect_components())
     def repair(self):
         self.check_components();QMessageBox.information(self,'组件修复','当前为开发预览版。发布仓库与签名校验尚未配置，自动安装暂不可用。\n正式版本通过重新安装完整软件包修复内置组件。')
-    def update_info(self):QMessageBox.information(self,'检查更新','尚未配置 GitHub 发布仓库，无法查询版本。\n这不代表当前已是最新版。组件将随完整软件包更新。')
+    def update_info(self):
+        self.run_job(lambda progress:updater.check_for_update(),self.show_update)
+    def show_update(self,info):
+        if not info['available']:
+            QMessageBox.information(self,'检查更新',f'当前版本：V{info["current"]}\n已是最新版本。')
+            return
+        if not info['installer'] or not info['checksums']:
+            QMessageBox.warning(self,'发现新版本',f'发现 V{info["latest"]}，但该发布缺少当前系统安装包或 SHA-256 校验清单。\n请前往发布页手动下载：\n{info["release_url"]}')
+            return
+        answer=QMessageBox.question(self,'发现新版本',f'当前版本：V{info["current"]}\n最新版本：V{info["latest"]}\n\n现在下载、校验并安装更新吗？')
+        if answer==QMessageBox.StandardButton.Yes:
+            self.start_update_download(info)
+    def start_update_download(self,info):
+        # The release-check worker emits its result just before its finished
+        # signal.  Wait for it to leave self.jobs instead of treating the
+        # user's affirmative click as a competing operation.
+        if self.jobs:
+            QTimer.singleShot(50,lambda:self.start_update_download(info));return
+        self.run_job(lambda progress:updater.download_update(info,progress),self.start_update_install)
+    def start_update_install(self,path):
+        if self.jobs:
+            QTimer.singleShot(50,lambda:self.start_update_install(path));return
+        self.run_job(lambda progress:updater.install_update(Path(path)),self.installed_update)
+    def installed_update(self,message):
+        try:
+            self.log(message)
+            QMessageBox.information(self,'开始安装更新',message)
+            if sys.platform in ('win32','darwin') or sys.platform.startswith('linux'):
+                QApplication.instance().quit()
+        except Exception as e:self.error('无法安装更新：'+str(e))
 
 def main():
     app=QApplication(sys.argv);app.setStyle('Fusion');app.setStyleSheet(STYLE);window=Window();window.show()

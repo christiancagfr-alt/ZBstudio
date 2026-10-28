@@ -10,7 +10,7 @@ class SourceSheet(BaseModel):
     enabled:bool=False
 class Settings(BaseModel):
     voice_enabled:bool=True
-    producer:str='佳佳'
+    producer:str=''
     prefix:str='ZB'
     source_spreadsheet_id:str=''
     source_sheets:list[str]=Field(default_factory=list)

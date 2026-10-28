@@ -1,5 +1,11 @@
 # ZB Studio
 
+当前桌面版本：`0.5.1`。
+
+## 安装包与更新
+
+从 [GitHub Releases](https://github.com/christiancagfr-alt/ZBstudio/releases) 下载对应平台的安装包。应用的“系统设置 → 检查更新”会读取最新 Release；只会下载包含 SHA-256 清单且校验通过的当前平台安装包。用户工作表、Google 授权和本地下载路径保存在各自系统的用户数据目录，既不随安装包发布，也不会被更新覆盖。
+
 Python / PySide6 桌面视频任务工作台，支持 Windows、macOS 与 Linux。
 
 ## 开发与构建

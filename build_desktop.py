@@ -3,6 +3,9 @@ import subprocess
 import sys
 from pathlib import Path
 root=Path(__file__).resolve().parent
+sys.path.insert(0,str(root/'src'))
+from zb_studio.version import APP_VERSION
+from zb_studio.package_safety import assert_safe_release_tree
 output=root/(sys.argv[1] if len(sys.argv)>1 else 'dist')
 cmd=[sys.executable,'-m','PyInstaller','--noconfirm','--clean','--windowed','--name','ZBStudio','--paths','src','--collect-data','googleapiclient','--collect-data','certifi','--collect-all','keyring']
 for package in ('PySide6','google-api-python-client','google-auth','google-auth-oauthlib','httpx','platformdirs','pydantic'):
@@ -28,3 +31,9 @@ if sys.platform == 'win32':
         diagnostics=root/'build'/'excluded-system-libraries'
         diagnostics.mkdir(parents=True,exist_ok=True)
         shutil.move(str(conflicting),str(diagnostics/'icuuc.dll'))
+
+# User data lives in the operating system's per-user data directory.  Keep a
+# hard release gate here so a future build-script change cannot package it.
+bundle = output / ('ZBStudio.app' if sys.platform == 'darwin' else 'ZBStudio')
+assert_safe_release_tree(bundle)
+print(f'ZB Studio {APP_VERSION}: release tree contains no local configuration or credentials')

@@ -13,7 +13,7 @@ def window(monkeypatch,tmp_path):
     from zb_studio import journal
     monkeypatch.setattr(journal,'path',lambda:tmp_path/'settings.json')
     app=QApplication.instance() or QApplication([])
-    w=Window(Settings());yield w;w.close();app.processEvents()
+    w=Window(Settings(producer='佳佳'));yield w;w.close();app.processEvents()
 
 def test_native_alias_filter_and_claim_selection(window):
     t=Task('doc','张三需求表3',4,0,'长文案','张三','2026-10-27','测试文案')

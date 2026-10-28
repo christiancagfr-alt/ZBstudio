@@ -4,17 +4,20 @@
 #ifndef OutputDir
 #define OutputDir "..\installers"
 #endif
+#ifndef AppVersion
+#define AppVersion "0.5.1"
+#endif
 [Setup]
 AppId={{D7BA63AD-5774-45BC-8C74-32890911A850}
 AppName=ZB Studio
-AppVersion=0.5.0
+AppVersion={#AppVersion}
 DefaultDirName={localappdata}\Programs\ZB Studio
 DefaultGroupName=ZB Studio
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#OutputDir}
-OutputBaseFilename=ZBStudio-0.5.0-Windows-Setup
+OutputBaseFilename=ZBStudio-{#AppVersion}-Windows-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
