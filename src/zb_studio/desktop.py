@@ -1,5 +1,6 @@
 """Native Qt desktop. Business work runs off the GUI thread."""
 import sys
+from html import escape
 from pathlib import Path
 from PySide6.QtCore import Qt, QThread, Signal, QUrl, QTimer, QDate, QLocale
 from PySide6.QtGui import QDesktopServices,QPixmap,QColor,QIcon
@@ -135,12 +136,13 @@ class Window(QMainWindow):
         self.search=QLineEdit();self.search.setPlaceholderText('搜索文案、人物…');self.search.setMinimumWidth(120);self.search.setMaximumWidth(240);self.search.textChanged.connect(self.refresh_table)
         self.requester=QComboBox();self.requester.addItem('全部需求者','');self.requester.currentIndexChanged.connect(self.refresh_table)
         self.state=QComboBox();self.state.addItems(['全部状态','可领取','已分配','已完成']);self.state.currentIndexChanged.connect(self.refresh_table)
+        self.viral_filter=QComboBox();self.viral_filter.addItems(['全部爆帖状态','爆帖','非爆帖']);self.viral_filter.currentIndexChanged.connect(self.refresh_table);self.viral_filter.setFixedWidth(120)
         self.requester.setFixedWidth(120);self.state.setFixedWidth(105)
-        for w in [self.search,self.requester,self.state]:bar.addWidget(w)
+        for w in [self.search,self.requester,self.state,self.viral_filter]:bar.addWidget(w)
         bar.addWidget(button('全部人物',self.clear_group));bar.addStretch();bar.addWidget(button('刷新任务',self.reload,True))
         self.cards=QHBoxLayout();self.cards.setContentsMargins(0,0,0,4);self.cards.setSpacing(12);card_widget=QWidget();card_widget.setLayout(self.cards);area=QScrollArea();area.setWidgetResizable(True);area.setWidget(card_widget);area.setFixedHeight(190);self.card_area=area;v.addWidget(area)
         modes=QHBoxLayout();modes.addWidget(button('人物卡片',lambda:area.setVisible(True),True));modes.addWidget(button('完整列表',lambda:area.setVisible(False)));self.count=QLabel('尚未加载任务');modes.addWidget(self.count,1);v.addLayout(modes)
-        self.task_table=table(['选择','序号','需求者 / 人物','需求日期','中文文案','葡语文案','图片','制作人','进度','自动命名','成品链接']);self.task_table.setColumnWidth(4,250);self.task_table.setColumnWidth(9,250);self.task_table.setColumnWidth(6,72);v.addWidget(self.task_table,1)
+        self.task_table=table(['选择','序号','需求者 / 人物','需求日期','中文文案','葡语文案','图片','制作人','进度','自动命名','成品链接','播放量','爆帖状态']);self.task_table.setColumnWidth(4,250);self.task_table.setColumnWidth(9,250);self.task_table.setColumnWidth(6,72);v.addWidget(self.task_table,1)
         actions=QHBoxLayout();self.select_all=QCheckBox('全选当前可领取');self.select_all.clicked.connect(self.toggle_all);actions.addWidget(self.select_all);actions.addWidget(button('领取勾选任务',self.claim,True));actions.addWidget(button('下载 / 重试选中行素材',self.download));actions.addStretch();v.addLayout(actions);self.pages.addWidget(page)
     def clear_group(self):self.group_filter=None;self.refresh_table()
     def reload(self):
@@ -172,13 +174,20 @@ class Window(QMainWindow):
     def select_group(self,key):self.group_filter=key;self.refresh_table()
     def refresh_table(self):
         if not hasattr(self,'task_table'):return
-        q=self.search.text().lower();s=self.state.currentIndex();who=self.requester.currentData()
-        self.visible=[t for t in self.tasks if (not self.mine or t.owner==self.cfg.producer) and (not who or t.requester==who) and (not self.group_filter or (t.source_id,t.sheet,t.start_col)==self.group_filter) and (not q or q in ' '.join([t.chinese,t.portuguese,t.filename,t.label]).lower()) and (s==0 or s==1 and t.available or s==2 and t.owner and not t.output or s==3 and t.output)]
+        q=self.search.text().lower();s=self.state.currentIndex();who=self.requester.currentData();viral=self.viral_filter.currentIndex()
+        self.visible=[t for t in self.tasks if (not self.mine or t.owner==self.cfg.producer) and (not who or t.requester==who) and (not self.group_filter or (t.source_id,t.sheet,t.start_col)==self.group_filter) and (not q or q in ' '.join([t.chinese,t.portuguese,t.filename,t.label]).lower()) and (s==0 or s==1 and t.available or s==2 and t.owner and not t.output or s==3 and t.output) and (viral==0 or viral==1 and t.viral and t.output or viral==2 and not t.viral and t.output)]
         nums={t.identity:n for t,n in allocate_numbers(self.tasks,[t.identity for t in self.tasks])}
-        fill(self.task_table,[['',t.number or nums[t.identity],t.label,t.deadline,t.chinese,t.portuguese,'',t.owner,'已完成' if t.output else '已分配' if t.owner else '可领取',t.filename,t.output] for t in self.visible])
+        fill(self.task_table,[['',t.number or nums[t.identity],t.label,t.deadline,t.chinese,t.portuguese,'',t.owner,'已完成' if t.output else '已分配' if t.owner else '可领取',t.filename,t.output,t.views,'爆帖' if t.output and t.viral else '未标记' if t.output else '—'] for t in self.visible])
         for r,t in enumerate(self.visible):
             item=self.task_table.item(r,0)
             self.task_table.setCellWidget(r,6,Thumbnail(self.thumbnails,t.image));status=self.task_table.item(r,8);status.setForeground(QColor('#0fa66d' if t.output else '#e68b22' if t.owner else '#1677ed'))
+            if t.views_note:self.task_table.item(r,11).setToolTip(t.views_note)
+            if t.views and t.views_url:
+                link=QLabel(f'<a href="{escape(t.views_url,quote=True)}">{escape(t.views)}</a>')
+                link.setTextFormat(Qt.TextFormat.RichText);link.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse|Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
+                link.setToolTip(t.views_note or t.views_url);link.linkActivated.connect(lambda url:QDesktopServices.openUrl(QUrl(url)))
+                self.task_table.setCellWidget(r,11,link)
+            if t.output and t.viral:self.task_table.item(r,12).setForeground(QColor('#0fa66d'))
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
             if t.available and not t.output:item.setFlags(item.flags()|Qt.ItemFlag.ItemIsUserCheckable);item.setCheckState(Qt.CheckState.Unchecked)
             if not t.output and (t.available or t.owner==self.cfg.producer):
@@ -224,23 +233,23 @@ class Window(QMainWindow):
         if t.owner!=self.cfg.producer or not t.filename:self.error('请选择自己已领取的任务');return
         self.run_job(lambda p:desktop_service.download_claim_image(self.cfg,{'id':t.identity,'filename':t.filename,'deadline':t.deadline,'image':t.image,'date':t.filename.rsplit('-',1)[-1],'folder':t.label,'number':t.number},p),lambda path:(self.log('已保存：'+path),self.announce('下载完成')))
     def build_upload(self):
-        page=QWidget();v=QVBoxLayout(page);v.addWidget(QLabel('拖入视频文件，或选择文件 / 文件夹。上传前检查整个队列，失败即停止。'))
-        bar=QHBoxLayout();bar.addWidget(button('选择视频',self.pick_videos));bar.addWidget(button('选择文件夹',self.pick_folder));bar.addWidget(button('清空队列',self.clear_upload));bar.addWidget(button('开始上传',self.upload,True));v.addLayout(bar)
-        self.upload_table=table(['视频路径']);v.addWidget(self.upload_table);v.addWidget(QLabel('当前支持逐文件进度；跨进程断点续传待实现。'));self.pages.addWidget(page)
+        page=QWidget();v=QVBoxLayout(page);v.addWidget(QLabel('拖入成品文件，或选择文件 / 文件夹。上传前检查整个队列，失败即停止。'))
+        bar=QHBoxLayout();bar.addWidget(button('选择文件',self.pick_videos));bar.addWidget(button('选择文件夹',self.pick_folder));bar.addWidget(button('清空队列',self.clear_upload));bar.addWidget(button('开始上传',self.upload,True));v.addLayout(bar)
+        self.upload_table=table(['成品文件路径']);v.addWidget(self.upload_table);v.addWidget(QLabel('当前支持逐文件进度；跨进程断点续传待实现。'));self.pages.addWidget(page)
     def add_paths(self,paths):
         if self.jobs:return
         self.paths.extend(str(p) for p in paths);fill(self.upload_table,[[p] for p in self.paths]);self.pages.setCurrentIndex(1)
-    def pick_videos(self):self.add_paths(QFileDialog.getOpenFileNames(self,'选择视频','','视频 (*.mp4 *.mov *.mkv *.webm)')[0])
+    def pick_videos(self):self.add_paths(QFileDialog.getOpenFileNames(self,'选择成品文件','','所有文件 (*)')[0])
     def pick_folder(self):
-        folder=QFileDialog.getExistingDirectory(self,'选择视频文件夹')
-        if folder:self.add_paths(p for p in Path(folder).rglob('*') if p.is_file() and p.suffix.lower() in ('.mp4','.mov','.mkv','.webm'))
+        folder=QFileDialog.getExistingDirectory(self,'选择成品文件夹')
+        if folder:self.add_paths(p for p in Path(folder).rglob('*') if p.is_file())
     def clear_upload(self):
         if not self.jobs:self.paths=[];fill(self.upload_table,[])
     def upload(self):
         if self.paths:
             def work(progress):
                 n=desktop_service.upload_files(self.cfg,list(self.paths),progress)
-                progress(f'{n} 个视频上传回填完成；正在刷新任务…')
+                progress(f'{n} 个成品上传回填完成；正在刷新任务…')
                 return desktop_service.query(self.cfg)
             self.run_job(work,lambda tasks:(self.loaded(tasks),self.refresh_stats(),self.log('上传回填完成，任务状态已刷新')))
     def dragEnterEvent(self,event):
@@ -251,11 +260,12 @@ class Window(QMainWindow):
         bar=QHBoxLayout();today=QDate.currentDate();self.stats_from=QDateEdit(QDate(today.year(),today.month(),1));self.stats_to=QDateEdit(today)
         for widget in (self.stats_from,self.stats_to):widget.setCalendarPopup(True);widget.setDisplayFormat('yyyy-MM-dd')
         bar.addWidget(QLabel('日期范围'));bar.addWidget(self.stats_from);bar.addWidget(self.stats_to);bar.addWidget(button('统计',self.refresh_stats));bar.addWidget(button('本月',self.stats_month));bar.addWidget(button('查看操作日志',self.show_history));bar.addStretch();v.addLayout(bar)
-        note=QLabel('表格：按需求日期筛选当前状态。曲线：按本机操作日志的发生日期统计领取、放弃、完成事件；不推算历史未领取数量。无年份日期按所选开始年份计算。');note.setWordWrap(True);note.setObjectName('muted');v.addWidget(note)
+        note=QLabel('表格按需求日期统计；爆帖以成品链接单元格绿色背景为准，播放量合计仅计可识别的数字。曲线按本机日志统计操作次数。无年份日期按所选开始年份计算。');note.setWordWrap(True);note.setObjectName('muted');v.addWidget(note)
         self.chart=QChart();self.chart_view=QChartView(self.chart);self.chart_view.setMinimumHeight(220);v.addWidget(self.chart_view)
-        self.stats=table(['需求者 / 人物','总任务','未领取','已领取¹','已完成','放弃次数']);self.stats.setObjectName('compactStats');self.stats.horizontalHeader().setStretchLastSection(False);self.stats.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter);self.stats.setColumnWidth(0,240)
-        self.stats.horizontalHeaderItem(3).setToolTip('已领取包含已完成任务');self.stats.verticalHeader().setDefaultSectionSize(36)
-        for c in range(1,6):self.stats.setColumnWidth(c,76)
+        self.stats=table(['需求表','需求者 / 人物','总任务','未领取','已领取¹','已完成','爆帖数量','播放量合计','放弃次数']);self.stats.setObjectName('compactStats');self.stats.horizontalHeader().setStretchLastSection(False);self.stats.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter);self.stats.setColumnWidth(0,180);self.stats.setColumnWidth(1,220)
+        self.stats.horizontalHeaderItem(4).setToolTip('已领取包含已完成任务');self.stats.verticalHeader().setDefaultSectionSize(36)
+        for c in range(2,9):self.stats.setColumnWidth(c,76)
+        self.stats.setColumnWidth(7,140)
         v.addWidget(self.stats);self.pages.addWidget(page)
     def stats_month(self):
         now=QDate.currentDate();self.stats_from.setDate(QDate(now.year(),now.month(),1));self.stats_to.setDate(now);self.refresh_stats()

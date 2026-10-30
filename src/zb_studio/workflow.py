@@ -3,6 +3,8 @@ import threading
 from datetime import date
 from pathlib import Path
 import re
+import colorsys
+from urllib.parse import urlsplit
 from .domain import parse_sheet,allocate_numbers,make_filename,date_key,match_filename,OUTPUTS,key_for,header_index
 from .config import Settings
 from .journal import record
@@ -25,7 +27,56 @@ def read_grid(api,doc,sheet,metadata=None):
     ranges=result.get('valueRanges',[])
     return ranges[0].get('valueRange',{}).get('values',[]) if ranges else []
 
-def load_tasks(api,cfg:Settings,progress=None):
+def is_green_cell(cell,theme):
+    """Recognize green fills by hue and saturation, not green text or white cells."""
+    fmt=cell.get('effectiveFormat',{})
+    style=fmt.get('backgroundColorStyle',{})
+    color=style.get('rgbColor') or theme.get(style.get('themeColor')) or fmt.get('backgroundColor') or {}
+    if not isinstance(color,dict):return False
+    try:r,g,b=(float(color.get(k,0)) for k in ('red','green','blue'))
+    except (TypeError,ValueError):return False
+    if not all(0<=v<=1 for v in (r,g,b)):return False
+    hue,saturation,value=colorsys.rgb_to_hsv(r,g,b)
+    return value>=0.15 and saturation>=0.18 and 75<=hue*360<=165 and g>r and g>b
+
+def post_link(note,hyperlink=''):
+    """Use the first web link in a cell note, or its existing cell hyperlink."""
+    candidates=re.findall(r'https?://[^\s<>"\'\u3000-\u303f]+',str(note or ''),re.I)
+    if hyperlink:candidates.append(str(hyperlink))
+    for candidate in candidates:
+        candidate=candidate.rstrip('.,;:!?)]}，。；：！？）】》')
+        try:
+            url=urlsplit(candidate)
+            if url.scheme.lower() in ('http','https') and url.hostname and not url.username and not url.password:
+                return candidate
+        except ValueError:continue
+    return ''
+
+def read_output_colors(api,doc,sheet_id,tasks):
+    """Read displayed output fills and playback-cell notes in one batch per sheet."""
+    columns=sorted({t.columns[key] for t in tasks for key in ('output','views') if key in t.columns and (key=='views' or t.output)})
+    if not columns:return
+    ranges=[]
+    for col in columns:
+        rows=[t.row for t in tasks if t.columns.get('views')==col or (t.output and t.columns.get('output')==col)]
+        ranges.append({'gridRange':{'sheetId':sheet_id,'startRowIndex':min(rows)-1,'endRowIndex':max(rows),'startColumnIndex':col,'endColumnIndex':col+1}})
+    result=api.spreadsheets().getByDataFilter(spreadsheetId=doc,body={'dataFilters':ranges,'includeGridData':True},fields='properties(spreadsheetTheme(themeColors(colorType,color))),sheets(properties(sheetId),data(startRow,startColumn,rowData(values(note,hyperlink,effectiveFormat(backgroundColor,backgroundColorStyle)))))').execute()
+    theme={x.get('colorType'):x.get('color',{}).get('rgbColor',{}) for x in result.get('properties',{}).get('spreadsheetTheme',{}).get('themeColors',[])}
+    cells={}
+    for sheet in result.get('sheets',[]):
+        if sheet.get('properties',{}).get('sheetId')!=sheet_id:continue
+        for block in sheet.get('data',[]):
+            row0=block.get('startRow',0);col0=block.get('startColumn',0)
+            for offset,row in enumerate(block.get('rowData',[])):
+                for col_offset,cell in enumerate(row.get('values',[])):
+                    cells[(row0+offset+1,col0+col_offset)]=cell
+    for task in tasks:
+        task.viral=bool(task.output and is_green_cell(cells.get((task.row,task.columns.get('output')),{}),theme))
+        playback=cells.get((task.row,task.columns.get('views')),{})
+        task.views_note=str(playback.get('note') or '')
+        task.views_url=post_link(task.views_note,playback.get('hyperlink',''))
+
+def load_tasks(api,cfg:Settings,progress=None,include_metrics=False):
     if not cfg.source_sheets:raise ValueError('尚未启用工作表：请在设置中勾选工作表并点击“保存设置”，再刷新任务')
     tasks=[]
     metadata={s['title']:s for s in list_sheet_metadata(api,cfg.source_spreadsheet_id)} if progress else {}
@@ -35,7 +86,12 @@ def load_tasks(api,cfg:Settings,progress=None):
             if name not in metadata:raise ValueError(f'工作表已改名或不存在：{name}，请在设置中重新读取工作表列表')
             grid=read_grid(api,cfg.source_spreadsheet_id,name,metadata[name])
         else:grid=read_grid(api,cfg.source_spreadsheet_id,name)
-        tasks.extend(parse_sheet(cfg.source_spreadsheet_id,name,grid,cfg.requester_names.get(name,name)))
+        parsed=parse_sheet(cfg.source_spreadsheet_id,name,grid,cfg.requester_names.get(name,name))
+        if include_metrics and any('views' in t.columns or (t.output and 'output' in t.columns) for t in parsed):
+            meta=metadata[name] if progress else get_metadata(api,cfg.source_spreadsheet_id,name)
+            if progress:progress(f'正在同步成品颜色、播放量和贴文链接：{name}')
+            read_output_colors(api,cfg.source_spreadsheet_id,meta['sheetId'],parsed)
+        tasks.extend(parsed)
     if cfg.start_date or cfg.end_date:
         low=date_key(cfg.start_date) if cfg.start_date else ''
         high=date_key(cfg.end_date) if cfg.end_date else '99999999'
@@ -75,7 +131,9 @@ def left_header(header):
     if not starts or starts[0]!=0:raise ValueError('制作表左侧首列必须为日期表头')
     end=starts[1] if len(starts)>1 else len(header)
     outputs=[c for c in range(end) if key_for(header[c])=='output']
-    if outputs:end=outputs[0]+1
+    if outputs:
+        end=outputs[0]+1
+        if end<len(header) and key_for(header[end])=='views':end+=1
     return header[:end]
 
 
@@ -115,7 +173,7 @@ def production_location(api,cfg,task):
 def updates_for_task(cfg,task,number,name,production_row,production_cols):
     source_fields={'owner':cfg.producer,'filename':name,'number':number,'progress':'制作中'}
     production_fields={'requester':task.requester,'deadline':task.deadline,'chinese':task.chinese,'portuguese':task.portuguese,
-       'image':task.image,'reference':task.reference,'requirements':task.requirements,'urgency':task.urgency,'owner':cfg.producer,'filename':name,'number':number,'progress':'制作中'}
+       'image':task.image,'reference':task.reference,'requirements':task.requirements,'urgency':task.urgency,'views':task.views,'owner':cfg.producer,'filename':name,'number':number,'progress':'制作中'}
     updates_source=[];updates_prod=[]
     for k,v in source_fields.items():
         if k in task.columns:

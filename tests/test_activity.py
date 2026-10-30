@@ -11,7 +11,7 @@ def test_report_counts_snapshot_and_events_separately():
     t=Task('s','sheet',4,0,'人物','张三','10-27','正文',owner='佳佳')
     events=[{'kind':kind,'state':state,'updated':'2026-10-27T12:00:00+00:00','payload':{'tasks':[t.__dict__]}} for kind,state in [('claim','complete'),('release','complete'),('claim','needs_review')]]
     data=report([t],events,date(2026,10,1),date(2026,10,31))
-    assert data['rows']==[['张三 人物',1,0,1,0,1]]
+    assert data['rows']==[['sheet','张三 人物',1,0,1,0,0,'—',1]]
     assert data['days']['2026-10-27']=={'claim':1,'release':1,'upload':0}
     assert len(data['days'])==31
 

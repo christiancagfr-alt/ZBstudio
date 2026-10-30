@@ -116,5 +116,27 @@ def test_voice_preference_and_stat_alignment(window,monkeypatch):
     t=Task('doc','s',4,0,'人物','张三','2026-10-27','正文')
     window.loaded([t]);window.refresh_stats()
     assert window.stats.item(0,1).textAlignment()==Qt.AlignmentFlag.AlignCenter
-    assert window.stats.columnWidth(1)==76
+    assert window.stats.columnWidth(2)==76
     assert not window.stats.horizontalHeader().stretchLastSection()
+
+def test_my_production_filters_viral_and_shows_views(window):
+    a=Task('doc','s',4,0,'人物','甲','2026-10-27','正文',owner='佳佳',output='link',views='1.2万',viral=True)
+    b=Task('doc','s',5,0,'人物','甲','2026-10-27','正文',owner='佳佳',output='link2',views='99')
+    window.loaded([a,b]);window.navigate(0,True);window.viral_filter.setCurrentIndex(1)
+    assert window.task_table.rowCount()==1
+    assert window.task_table.item(0,11).text()=='1.2万'
+    assert window.task_table.item(0,12).text()=='爆帖'
+    window.viral_filter.setCurrentIndex(2)
+    assert window.task_table.rowCount()==1 and window.task_table.item(0,11).text()=='99'
+
+def test_playback_note_link_is_clickable_in_my_production(window,monkeypatch):
+    import zb_studio.desktop as desktop
+    from PySide6.QtWidgets import QLabel
+    opened=[];monkeypatch.setattr(desktop.QDesktopServices,'openUrl',lambda url:opened.append(url.toString()) or True)
+    task=Task('doc','s',4,0,'人物','甲','2026-10-27','正文',owner='佳佳',views='1.2万',views_note='贴文 https://example.com/post/1',views_url='https://example.com/post/1')
+    window.loaded([task]);window.navigate(0,True)
+    link=window.task_table.cellWidget(0,11)
+    assert isinstance(link,QLabel) and '1.2万' in link.text()
+    assert link.toolTip()==task.views_note
+    link.linkActivated.emit(task.views_url)
+    assert opened==['https://example.com/post/1']

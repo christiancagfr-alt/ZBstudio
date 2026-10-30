@@ -11,7 +11,7 @@ def query(cfg,progress=None):
     if progress:progress('正在连接 Google 并检查授权…')
     sheets,_=services()
     if progress:progress(f'正在读取 {len(cfg.source_sheets)} 个需求工作表…')
-    tasks=load_tasks(sheets,cfg,progress) if progress else load_tasks(sheets,cfg)
+    tasks=load_tasks(sheets,cfg,progress,include_metrics=True)
     if progress:progress(f'读取完成：{len(tasks)} 个任务')
     return tasks
 
@@ -92,7 +92,7 @@ def upload_files(cfg,paths,progress):
     plan=[];seen=set()
     for raw in paths:
         p=Path(raw)
-        if not p.is_file() or p.suffix.lower() not in ('.mp4','.mov','.mkv','.webm'):raise ValueError(f'不支持的文件：{p.name}')
+        if not p.is_file():raise ValueError(f'文件不存在或不是普通文件：{p.name}')
         if p.stem in seen:raise ValueError(f'重复命名：{p.name}')
         seen.add(p.stem)
         matches=match_filename(p.stem,tasks)

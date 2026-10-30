@@ -1,4 +1,5 @@
 from pathlib import Path
+import mimetypes
 from .domain import safe_component
 from .file_safety import drive_literal,valid_drive_id
 
@@ -14,11 +15,10 @@ def ensure_folder(drive,name,parent):
 def upload_video(drive,file_path,root_id,day,person):
     from googleapiclient.http import MediaFileUpload
     path=Path(file_path)
-    if path.suffix.lower() not in ('.mp4','.mov','.mkv','.webm'):raise ValueError('不支持的视频文件格式')
     if not path.is_file():raise FileNotFoundError(path)
     day_dir=ensure_folder(drive,safe_component(day),root_id)
     person_dir=ensure_folder(drive,safe_component(person),day_dir)
-    media=MediaFileUpload(str(path),mimetype='application/octet-stream',resumable=True)
+    media=MediaFileUpload(str(path),mimetype=mimetypes.guess_type(path.name)[0] or 'application/octet-stream',resumable=True)
     request=drive.files().create(body={'name':path.name,'parents':[person_dir]},media_body=media,fields='id,webViewLink')
     response=None
     while response is None:

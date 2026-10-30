@@ -19,6 +19,7 @@ ALIASES = {
     "filename": ["自动命名", "成品命名"],
     "number": ["序号", "编号"],
     "output": ["成品链接", "视频链接"],
+    "views": ["播放量", "观看量", "播放次数"],
 }
 OUTPUTS={"owner":"制作人", "filename":"自动命名", "number":"序号", "output":"成品链接"}
 
@@ -66,6 +67,10 @@ class Task:
     avatar:str=''
     requirements:str=''
     urgency:str=''
+    views:str=''
+    viral:bool=False
+    views_note:str=''
+    views_url:str=''
     @property
     def identity(self):return f"{self.source_id}:{self.sheet}:{self.start_col}:{self.row}"
     @property
@@ -113,7 +118,7 @@ def parse_sheet(spreadsheet_id, sheet, grid, requester=None):
             out.append(Task(spreadsheet_id,sheet,r_idx+1,start,person,requester or sheet,
                 get('deadline'),get('chinese'),get('portuguese'),get('image'),get('reference'),
                 get('owner'),get('filename'),get('number'),get('output'),get('progress'),cmap,
-                str(grid[1][start]) if len(grid)>1 and start<len(grid[1]) else '',get('requirements'),get('urgency')))
+                str(grid[1][start]) if len(grid)>1 and start<len(grid[1]) else '',get('requirements'),get('urgency'),get('views')))
     return out
 
 def allocate_numbers(all_tasks, selected_ids):

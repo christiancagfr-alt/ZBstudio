@@ -84,11 +84,11 @@ def download_asset(req:AssetRequest):
     except Exception as e:raise HTTPException(400,str(e)) from e
 @app.post('/api/uploads/video')
 def upload(file:UploadFile=File(...)):
-    """Single video upload with exact-name preflight and Drive folder placement."""
+    """Single file upload with exact-name preflight and Drive folder placement."""
     cfg=load_settings()
     if not cfg.drive_parent_folder_id:raise HTTPException(400,'请先配置 Drive 父文件夹 ID')
     filename=Path(file.filename or '').name
-    if Path(filename).suffix.lower() not in ('.mp4','.mov','.mkv','.webm'):raise HTTPException(400,'仅支持视频文件')
+    if not filename:raise HTTPException(400,'文件名不能为空')
     try:
         sheets,drive=services()
         tasks=load_tasks(sheets,cfg)
