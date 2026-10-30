@@ -62,7 +62,14 @@ def test_report_counts_green_finished_tasks_per_sheet():
     b=Task('doc','one',5,0,'人物','甲','2026-10-27','b',owner='制作人',output='link2',views='500')
     c=Task('doc','two',4,0,'人物','甲','2026-10-27','c',owner='制作人',output='link3')
     rows=report([a,b,c],[],date(2026,10,1),date(2026,10,31))['rows']
-    assert rows==[['one','甲 人物',2,0,2,2,1,'12,500',0],['two','甲 人物',1,0,1,1,0,'—',0]]
+    assert rows==[['one','甲 人物',2,0,2,2,1,0],['two','甲 人物',1,0,1,1,0,0]]
+
+
+def test_viral_count_does_not_depend_on_playback_value():
+    a=Task('doc','one',4,0,'人物','甲','2026-10-27','a',output='link',viral=True,views='100000+')
+    b=Task('doc','one',5,0,'人物','甲','2026-10-27','b',output='link2',views='未统计')
+    row=report([a,b],[],date(2026,10,1),date(2026,10,31))['rows'][0]
+    assert row[5:7]==[2,1]
 
 
 def test_upload_accepts_image_and_preserves_extension(tmp_path,monkeypatch):

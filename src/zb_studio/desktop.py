@@ -1,5 +1,7 @@
 """Native Qt desktop. Business work runs off the GUI thread."""
 import sys
+import csv
+import io
 from html import escape
 from pathlib import Path
 from PySide6.QtCore import Qt, QThread, Signal, QUrl, QTimer, QDate, QLocale
@@ -143,6 +145,7 @@ class Window(QMainWindow):
         self.cards=QHBoxLayout();self.cards.setContentsMargins(0,0,0,4);self.cards.setSpacing(12);card_widget=QWidget();card_widget.setLayout(self.cards);area=QScrollArea();area.setWidgetResizable(True);area.setWidget(card_widget);area.setFixedHeight(190);self.card_area=area;v.addWidget(area)
         modes=QHBoxLayout();modes.addWidget(button('人物卡片',lambda:area.setVisible(True),True));modes.addWidget(button('完整列表',lambda:area.setVisible(False)));self.count=QLabel('尚未加载任务');modes.addWidget(self.count,1);v.addLayout(modes)
         self.task_table=table(['选择','序号','需求者 / 人物','需求日期','中文文案','葡语文案','图片','制作人','进度','自动命名','成品链接','播放量','爆帖状态']);self.task_table.setColumnWidth(4,250);self.task_table.setColumnWidth(9,250);self.task_table.setColumnWidth(6,72);v.addWidget(self.task_table,1)
+        self.task_table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
         actions=QHBoxLayout();self.select_all=QCheckBox('全选当前可领取');self.select_all.clicked.connect(self.toggle_all);actions.addWidget(self.select_all);actions.addWidget(button('领取勾选任务',self.claim,True));actions.addWidget(button('下载 / 重试选中行素材',self.download));actions.addStretch();v.addLayout(actions);self.pages.addWidget(page)
     def clear_group(self):self.group_filter=None;self.refresh_table()
     def reload(self):
@@ -182,10 +185,13 @@ class Window(QMainWindow):
             item=self.task_table.item(r,0)
             self.task_table.setCellWidget(r,6,Thumbnail(self.thumbnails,t.image));status=self.task_table.item(r,8);status.setForeground(QColor('#0fa66d' if t.output else '#e68b22' if t.owner else '#1677ed'))
             if t.views_note:self.task_table.item(r,11).setToolTip(t.views_note)
+            for col in (10,11,12):self.task_table.item(r,col).setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             if t.views and t.views_url:
                 link=QLabel(f'<a href="{escape(t.views_url,quote=True)}">{escape(t.views)}</a>')
                 link.setTextFormat(Qt.TextFormat.RichText);link.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse|Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
+                link.setAlignment(Qt.AlignmentFlag.AlignCenter);link.setStyleSheet('background:#ffffff; font-size:13px;')
                 link.setToolTip(t.views_note or t.views_url);link.linkActivated.connect(lambda url:QDesktopServices.openUrl(QUrl(url)))
+                self.task_table.item(r,11).setText('')
                 self.task_table.setCellWidget(r,11,link)
             if t.output and t.viral:self.task_table.item(r,12).setForeground(QColor('#0fa66d'))
             item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
@@ -259,16 +265,26 @@ class Window(QMainWindow):
         page=QWidget();v=QVBoxLayout(page);v.setContentsMargins(24,20,24,20)
         bar=QHBoxLayout();today=QDate.currentDate();self.stats_from=QDateEdit(QDate(today.year(),today.month(),1));self.stats_to=QDateEdit(today)
         for widget in (self.stats_from,self.stats_to):widget.setCalendarPopup(True);widget.setDisplayFormat('yyyy-MM-dd')
-        bar.addWidget(QLabel('日期范围'));bar.addWidget(self.stats_from);bar.addWidget(self.stats_to);bar.addWidget(button('统计',self.refresh_stats));bar.addWidget(button('本月',self.stats_month));bar.addWidget(button('查看操作日志',self.show_history));bar.addStretch();v.addLayout(bar)
-        note=QLabel('表格按需求日期统计；爆帖以成品链接单元格绿色背景为准，播放量合计仅计可识别的数字。曲线按本机日志统计操作次数。无年份日期按所选开始年份计算。');note.setWordWrap(True);note.setObjectName('muted');v.addWidget(note)
+        bar.addWidget(QLabel('日期范围'));bar.addWidget(self.stats_from);bar.addWidget(self.stats_to);bar.addWidget(button('统计',self.refresh_stats));bar.addWidget(button('本月',self.stats_month));bar.addWidget(button('复制统计表',self.copy_stats));bar.addWidget(button('查看操作日志',self.show_history));bar.addStretch();v.addLayout(bar)
+        note=QLabel('表格按需求日期统计；爆帖数量以有成品链接且单元格背景为绿色的任务数为准。曲线按本机日志统计操作次数。');note.setWordWrap(True);note.setObjectName('muted');v.addWidget(note)
         self.chart=QChart();self.chart_view=QChartView(self.chart);self.chart_view.setMinimumHeight(220);v.addWidget(self.chart_view)
-        self.stats=table(['需求表','需求者 / 人物','总任务','未领取','已领取¹','已完成','爆帖数量','播放量合计','放弃次数']);self.stats.setObjectName('compactStats');self.stats.horizontalHeader().setStretchLastSection(False);self.stats.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter);self.stats.setColumnWidth(0,180);self.stats.setColumnWidth(1,220)
+        self.stats=table(['需求表','需求者 / 人物','总任务','未领取','已领取¹','已完成','爆帖数量','放弃次数']);self.stats.setObjectName('compactStats');self.stats.horizontalHeader().setStretchLastSection(False);self.stats.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter);self.stats.setColumnWidth(0,180);self.stats.setColumnWidth(1,220)
         self.stats.horizontalHeaderItem(4).setToolTip('已领取包含已完成任务');self.stats.verticalHeader().setDefaultSectionSize(36)
-        for c in range(2,9):self.stats.setColumnWidth(c,76)
-        self.stats.setColumnWidth(7,140)
+        for c in range(2,8):self.stats.setColumnWidth(c,76)
         v.addWidget(self.stats);self.pages.addWidget(page)
     def stats_month(self):
         now=QDate.currentDate();self.stats_from.setDate(QDate(now.year(),now.month(),1));self.stats_to.setDate(now);self.refresh_stats()
+    def copy_stats(self):
+        def safe(value):
+            value=str(value or '')
+            if value.lstrip().startswith(('=','+','-','@')):return "'"+value
+            return value
+        buffer=io.StringIO(newline='');writer=csv.writer(buffer,delimiter='\t',lineterminator='\r\n')
+        writer.writerow([safe(self.stats.horizontalHeaderItem(c).text()) for c in range(self.stats.columnCount())])
+        for row in range(self.stats.rowCount()):
+            writer.writerow([safe(self.stats.item(row,c).text() if self.stats.item(row,c) else '') for c in range(self.stats.columnCount())])
+        QApplication.clipboard().setText(buffer.getvalue())
+        self.statusBar().showMessage(f'已复制 {self.stats.rowCount()} 行统计数据，可直接粘贴到 Google 表格',8000)
     def show_history(self):
         self.navigate(4)
         try:

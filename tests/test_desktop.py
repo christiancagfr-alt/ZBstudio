@@ -137,6 +137,20 @@ def test_playback_note_link_is_clickable_in_my_production(window,monkeypatch):
     window.loaded([task]);window.navigate(0,True)
     link=window.task_table.cellWidget(0,11)
     assert isinstance(link,QLabel) and '1.2万' in link.text()
+    assert link.alignment()==Qt.AlignmentFlag.AlignCenter
+    assert window.task_table.item(0,11).text()==''
     assert link.toolTip()==task.views_note
     link.linkActivated.emit(task.views_url)
     assert opened==['https://example.com/post/1']
+
+def test_copy_stats_includes_headers_and_all_visible_rows(window,monkeypatch):
+    import csv,io
+    from PySide6.QtCore import QDate
+    window.stats_from.setDate(QDate(2026,10,1));window.stats_to.setDate(QDate(2026,10,31))
+    task=Task('doc','表一',4,0,'人物','甲','2026-10-27','正文',output='link',viral=True,views='100000+')
+    window.loaded([task]);window.refresh_stats();window.copy_stats()
+    rows=list(csv.reader(io.StringIO(QApplication.clipboard().text()),delimiter='\t'))
+    assert rows[0][0:2]==['需求表','需求者 / 人物']
+    assert rows[1][0:2]==['表一','甲 人物']
+    assert rows[0][6]=='爆帖数量' and '播放量合计' not in rows[0]
+    assert rows[1][6]=='1'
