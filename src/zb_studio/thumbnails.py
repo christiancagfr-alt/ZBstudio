@@ -44,7 +44,7 @@ class Thumbnails(QObject):
 class Thumbnail(QLabel):
     def __init__(self,loader,url,width=42,height=46,zoom=True,on_click=None):
         super().__init__('加载中' if width>80 else '…');self.loader=loader;self.url=url;self.original=None;self.error='';self.preview=None;self.zoom=zoom;self.on_click=on_click
-        self.setFixedSize(width,height);self.setAlignment(Qt.AlignmentFlag.AlignCenter);self.setStyleSheet('background:#edf4fc;color:#8a9cb4;border-radius:6px;font-size:11px;');self.loader.request(url,self)
+        self.setFixedSize(width,height);self.setAlignment(Qt.AlignmentFlag.AlignCenter);self.setObjectName('thumbnail');self.loader.request(url,self)
     def ready(self,pix):
         self.original=pix;self.error='';self.setPixmap(pix.scaled(self.size(),Qt.AspectRatioMode.KeepAspectRatio,Qt.TransformationMode.SmoothTransformation));self.setToolTip('悬停放大' if self.zoom else '点击查看该组任务')
     def failed(self,error):self.error=error;self.setText('加载失败' if self.width()>80 else '重试');self.setToolTip(error+'；点击重试')

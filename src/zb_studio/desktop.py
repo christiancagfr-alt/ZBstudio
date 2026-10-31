@@ -6,7 +6,7 @@ from html import escape
 from pathlib import Path
 from PySide6.QtCore import Qt, QThread, Signal, QUrl, QTimer, QDate, QLocale
 from PySide6.QtGui import QDesktopServices,QPixmap,QColor,QIcon
-from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QPushButton,QLabel,QLineEdit,QComboBox,QTableWidget,QTableWidgetItem,QHeaderView,QStackedWidget,QFormLayout,QFileDialog,QMessageBox,QScrollArea,QAbstractItemView,QInputDialog,QTabWidget,QFrame,QCheckBox,QProgressBar,QPlainTextEdit,QDateEdit)
+from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QGridLayout,QPushButton,QLabel,QLineEdit,QComboBox,QTableWidget,QTableWidgetItem,QHeaderView,QStackedWidget,QFormLayout,QFileDialog,QMessageBox,QScrollArea,QAbstractItemView,QInputDialog,QTabWidget,QFrame,QCheckBox,QProgressBar,QPlainTextEdit,QDateEdit)
 from PySide6.QtNetwork import QNetworkAccessManager,QNetworkRequest
 from .config import load_settings,save_settings
 from . import google_client,desktop_service
@@ -18,7 +18,7 @@ from PySide6.QtCharts import QChart,QChartView,QLineSeries,QValueAxis
 from .assets import save_image
 from .thumbnails import Thumbnails,Thumbnail
 
-from .theme import STYLE
+from .theme import STYLE,DARK_STYLE
 from .native_icons import icon
 from .source_settings import suggest_alias,merge_sources
 from .version import APP_VERSION
@@ -63,7 +63,7 @@ class Window(QMainWindow):
         self.setWindowIcon(QIcon(str(logo_path)))
         header=QWidget();header.setObjectName('topbar');top=QHBoxLayout(header);top.setContentsMargins(14,10,14,10);top.setSpacing(8);self.top_controls=top
         logo=QLabel();logo.setFixedSize(32,32);logo.setPixmap(QIcon(str(logo_path)).pixmap(32,32));top.addWidget(logo)
-        title=QLabel('ZB Studio');title.setFixedWidth(144);title.setToolTip('视频制作工作台');title.setObjectName('brand');top.addWidget(title)
+        title=QLabel('ZB Studio');title.setMinimumWidth(100);title.setMaximumWidth(130);title.setToolTip('视频制作工作台');title.setObjectName('brand');top.addWidget(title)
         top.addSpacing(10);self.sheet_links=[]
         for text,fn in [('打开需求表 ↗',lambda:self.open_sheet(self.cfg.source_spreadsheet_id)),('打开制作表 ↗',lambda:self.open_sheet(self.cfg.production_spreadsheet_id))]:
             b=button(text,fn);b.setObjectName('soft');self.sheet_links.append(b)
@@ -77,7 +77,16 @@ class Window(QMainWindow):
         nav.addStretch()
         for link in self.sheet_links:nav.addWidget(link)
         foot=QLabel(f'ZB STUDIO\n桌面工作台 · V{APP_VERSION}');foot.setObjectName('muted');nav.addWidget(foot)
+        self.apply_theme(self.cfg.dark_mode)
         self.statusBar().showMessage('先在系统设置导入 Google 桌面授权文件并配置工作表。')
+    def apply_theme(self,dark):
+        self.current_dark=dark
+        self.setStyleSheet(DARK_STYLE if dark else STYLE)
+        if hasattr(self,'chart'):
+            self.chart.setTheme(QChart.ChartTheme.ChartThemeDark if dark else QChart.ChartTheme.ChartThemeLight)
+            self.chart.setBackgroundBrush(QColor('#202c3d' if dark else '#ffffff'))
+            self.chart.setPlotAreaBackgroundVisible(False)
+        if hasattr(self,'task_table'):self.refresh_table()
     def build_activity(self):
         page=QWidget();v=QVBoxLayout(page);v.setContentsMargins(20,18,20,18)
         title=QLabel('操作记录');title.setObjectName('title');v.addWidget(title)
@@ -142,7 +151,7 @@ class Window(QMainWindow):
         self.requester.setFixedWidth(120);self.state.setFixedWidth(105)
         for w in [self.search,self.requester,self.state,self.viral_filter]:bar.addWidget(w)
         bar.addWidget(button('全部人物',self.clear_group));bar.addStretch();bar.addWidget(button('刷新任务',self.reload,True))
-        self.cards=QHBoxLayout();self.cards.setContentsMargins(0,0,0,4);self.cards.setSpacing(12);card_widget=QWidget();card_widget.setLayout(self.cards);area=QScrollArea();area.setWidgetResizable(True);area.setWidget(card_widget);area.setFixedHeight(190);self.card_area=area;v.addWidget(area)
+        self.cards=QHBoxLayout();self.cards.setContentsMargins(0,0,0,4);self.cards.setSpacing(12);card_widget=QWidget();card_widget.setObjectName('cardShelf');card_widget.setLayout(self.cards);area=QScrollArea();area.setObjectName('cardArea');area.setWidgetResizable(True);area.setWidget(card_widget);area.setFixedHeight(190);self.card_area=area;v.addWidget(area)
         modes=QHBoxLayout();modes.addWidget(button('人物卡片',lambda:area.setVisible(True),True));modes.addWidget(button('完整列表',lambda:area.setVisible(False)));self.count=QLabel('尚未加载任务');modes.addWidget(self.count,1);v.addLayout(modes)
         self.task_table=table(['选择','序号','需求者 / 人物','需求日期','中文文案','葡语文案','图片','制作人','进度','自动命名','成品链接','播放量','爆帖状态']);self.task_table.setColumnWidth(4,250);self.task_table.setColumnWidth(9,250);self.task_table.setColumnWidth(6,72);v.addWidget(self.task_table,1)
         self.task_table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -189,7 +198,7 @@ class Window(QMainWindow):
             if t.views and t.views_url:
                 link=QLabel(f'<a href="{escape(t.views_url,quote=True)}">{escape(t.views)}</a>')
                 link.setTextFormat(Qt.TextFormat.RichText);link.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse|Qt.TextInteractionFlag.LinksAccessibleByKeyboard)
-                link.setAlignment(Qt.AlignmentFlag.AlignCenter);link.setStyleSheet('background:#ffffff; font-size:13px;')
+                link.setAlignment(Qt.AlignmentFlag.AlignCenter);link.setStyleSheet('background:#202c3d; font-size:13px;' if getattr(self,'current_dark',False) else 'background:#ffffff; font-size:13px;')
                 link.setToolTip(t.views_note or t.views_url);link.linkActivated.connect(lambda url:QDesktopServices.openUrl(QUrl(url)))
                 self.task_table.item(r,11).setText('')
                 self.task_table.setCellWidget(r,11,link)
@@ -239,25 +248,125 @@ class Window(QMainWindow):
         if t.owner!=self.cfg.producer or not t.filename:self.error('请选择自己已领取的任务');return
         self.run_job(lambda p:desktop_service.download_claim_image(self.cfg,{'id':t.identity,'filename':t.filename,'deadline':t.deadline,'image':t.image,'date':t.filename.rsplit('-',1)[-1],'folder':t.label,'number':t.number},p),lambda path:(self.log('已保存：'+path),self.announce('下载完成')))
     def build_upload(self):
-        page=QWidget();v=QVBoxLayout(page);v.addWidget(QLabel('拖入成品文件，或选择文件 / 文件夹。上传前检查整个队列，失败即停止。'))
+        page=QWidget();page.setObjectName('uploadContent');v=QVBoxLayout(page);v.setContentsMargins(16,12,16,16);v.setSpacing(8);v.addWidget(QLabel('拖入成品文件，或选择文件 / 文件夹。上传前检查整个队列，失败即停止。'))
+        choices=QGridLayout();choices.setHorizontalSpacing(12);choices.setVerticalSpacing(8);self.upload_choices={}
+        for i,(key,label) in enumerate([('type','类型'),('difficulty','难易程度'),('material','素材来源'),('software','软件')]):
+            column=(i%2)*2;row=i//2;choices.addWidget(QLabel(label),row,column);box=QComboBox();box.setMinimumWidth(160);box.setMinimumHeight(40);box.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon);box.setMinimumContentsLength(10);choices.addWidget(box,row,column+1);self.upload_choices[key]=box
+            box.currentTextChanged.connect(box.setToolTip)
+        choices.setColumnStretch(1,1);choices.setColumnStretch(3,1);v.addLayout(choices)
+        dates=QHBoxLayout();dates.addWidget(QLabel('登记日期'))
+        self.upload_date=QDateEdit(QDate.currentDate());self.upload_date.setCalendarPopup(True);self.upload_date.setDisplayFormat('yyyy-MM-dd');dates.addWidget(self.upload_date)
+        self.auto_date=True;self.date_hint=QLabel('未选择文件夹，默认当天');self.date_hint.setObjectName('muted');self.date_hint.setWordWrap(True)
+        self.upload_date.dateChanged.connect(self.manual_date_changed)
+        dates.addWidget(button('重新识别',self.redetect_date));dates.addWidget(button('恢复自动',self.restore_auto_date))
+        dates.addStretch();v.addLayout(dates);v.addWidget(self.date_hint)
+        category_bar=QHBoxLayout();category_bar.addWidget(button('刷新分类选项',self.refresh_upload_categories));category_bar.addStretch();v.addLayout(category_bar)
+        self.populate_upload_choices(self.cfg.register_category_options)
         bar=QHBoxLayout();bar.addWidget(button('选择文件',self.pick_videos));bar.addWidget(button('选择文件夹',self.pick_folder));bar.addWidget(button('清空队列',self.clear_upload));bar.addWidget(button('开始上传',self.upload,True));v.addLayout(bar)
-        self.upload_table=table(['成品文件路径']);v.addWidget(self.upload_table);v.addWidget(QLabel('当前支持逐文件进度；跨进程断点续传待实现。'));self.pages.addWidget(page)
+        self.upload_table=table(['成品文件路径']);v.addWidget(self.upload_table)
+        v.addWidget(QLabel('或粘贴 Google Drive 文件 / 文件夹链接（每行一个），读取文件名匹配后回填。'))
+        self.cloud_links=QPlainTextEdit();self.cloud_links.setPlaceholderText('https://drive.google.com/file/d/...\nhttps://drive.google.com/drive/folders/...');self.cloud_links.setMaximumHeight(110);v.addWidget(self.cloud_links)
+        self.cloud_date_timer=QTimer(self);self.cloud_date_timer.setSingleShot(True);self.cloud_date_timer.setInterval(900);self.cloud_date_timer.timeout.connect(self.detect_cloud_date)
+        self.cloud_links.textChanged.connect(lambda:self.cloud_date_timer.start() if self.auto_date else None)
+        v.addWidget(button('匹配云端链接并回填',self.complete_links,True));v.addWidget(QLabel('当前支持逐文件进度；跨进程断点续传待实现。'))
+        area=QScrollArea();area.setWidgetResizable(True);area.setWidget(page);self.pages.addWidget(area)
+    def complete_links(self):
+        links=[line.strip() for line in self.cloud_links.toPlainText().splitlines() if line.strip()]
+        if not links:self.error('请先粘贴 Google Drive 文件或文件夹链接');return
+        try:cfg=self.upload_settings()
+        except ValueError as e:self.error(str(e));return
+        def work(progress):
+            count=desktop_service.complete_drive_links(cfg,links,progress)
+            progress(f'{count} 个云端成品回填完成，正在刷新任务…')
+            return desktop_service.query(self.cfg)
+        self.run_job(work,lambda tasks:(self.loaded(tasks),self.refresh_stats(),self.log('云端成品回填完成')))
     def add_paths(self,paths):
         if self.jobs:return
         self.paths.extend(str(p) for p in paths);fill(self.upload_table,[[p] for p in self.paths]);self.pages.setCurrentIndex(1)
+        if self.auto_date:self.detect_local_date()
     def pick_videos(self):self.add_paths(QFileDialog.getOpenFileNames(self,'选择成品文件','','所有文件 (*)')[0])
     def pick_folder(self):
         folder=QFileDialog.getExistingDirectory(self,'选择成品文件夹')
         if folder:self.add_paths(p for p in Path(folder).rglob('*') if p.is_file())
     def clear_upload(self):
-        if not self.jobs:self.paths=[];fill(self.upload_table,[])
+        if not self.jobs:
+            self.paths=[];fill(self.upload_table,[])
+            if self.auto_date:self.set_detected_date(None,'未选择文件夹，默认当天')
     def upload(self):
         if self.paths:
+            try:cfg=self.upload_settings()
+            except ValueError as e:self.error(str(e));return
             def work(progress):
-                n=desktop_service.upload_files(self.cfg,list(self.paths),progress)
+                n=desktop_service.upload_files(cfg,list(self.paths),progress)
                 progress(f'{n} 个成品上传回填完成；正在刷新任务…')
                 return desktop_service.query(self.cfg)
             self.run_job(work,lambda tasks:(self.loaded(tasks),self.refresh_stats(),self.log('上传回填完成，任务状态已刷新')))
+    def populate_upload_choices(self,options):
+        for key,box in self.upload_choices.items():
+            current=box.currentData() or self.cfg.register_defaults.get(key,'');box.clear();box.addItem('请选择','')
+            for value in options.get(key,[]):box.addItem(value,value)
+            index=box.findData(current);box.setCurrentIndex(max(index,0))
+    def refresh_upload_categories(self):
+        doc=self.cfg.register_spreadsheet_id
+        if not doc:self.error('请先在系统设置中保存登记表 ID');return
+        def fetch(progress):
+            from .registration import read_categories
+            sheets,_=google_client.services();return read_categories(sheets,doc)
+        self.run_job(fetch,lambda options:(self.populate_upload_choices(options),self.statusBar().showMessage('分类选项已刷新',8000)))
+    def upload_settings(self):
+        values={key:box.currentData() or '' for key,box in self.upload_choices.items()}
+        if self.cfg.register_spreadsheet_id:
+            required=[key for key,value in values.items() if key in self.cfg.register_columns and not value]
+            if required:raise ValueError('请在成品上传中选择类型、难易程度、素材来源和软件（已关闭的字段除外）')
+        return self.cfg.model_copy(update={'register_defaults':self.cfg.register_defaults|values,'register_date_mode':'manual','register_date':self.upload_date.date().toString('yyyy-MM-dd')},deep=True)
+    def manual_date_changed(self,*args):
+        self.auto_date=False;self.date_hint.setText('已手动选择日期')
+    def set_detected_date(self,value,message):
+        if not self.auto_date:return
+        self.upload_date.blockSignals(True);self.upload_date.setDate(QDate.fromString(value,'yyyy-MM-dd') if value else QDate.currentDate());self.upload_date.blockSignals(False);self.date_hint.setText(message)
+    def detect_local_date(self):
+        dates=set();missing=False
+        cfg=self.cfg.model_copy(update={'register_date_mode':'folder'})
+        for raw in self.paths:
+            try:dates.add(desktop_service.completion_date(cfg,[p.name for p in reversed(Path(raw).parents)]))
+            except ValueError:missing=True
+        if len(dates)==1 and not missing:self.set_detected_date(next(iter(dates)),'已从文件夹识别日期')
+        elif len(dates)>1 or dates and missing:self.set_detected_date(None,'文件夹日期不一致或部分未识别，默认当天；可手动选择')
+        else:self.set_detected_date(None,'未识别到文件夹日期，默认当天')
+    def restore_auto_date(self):self.auto_date=True;self.redetect_date()
+    def redetect_date(self):
+        self.auto_date=True
+        if self.cloud_links.toPlainText().strip():self.detect_cloud_date()
+        elif self.paths:self.detect_local_date()
+        else:self.set_detected_date(None,'未选择文件夹，默认当天')
+    def detect_cloud_date(self):
+        if not self.auto_date:return
+        links=[line.strip() for line in self.cloud_links.toPlainText().splitlines() if line.strip()]
+        if not links:self.set_detected_date(None,'未选择文件夹，默认当天');return
+        if any(not link.startswith('https://drive.google.com/') for link in links):self.set_detected_date(None,'等待有效的 Google Drive 链接');return
+        if self.jobs:self.date_hint.setText('正在执行其他任务，稍后可点击重新识别');return
+        self.date_hint.setText('正在读取云端文件夹日期…')
+        def fetch(progress):
+            _,drive=google_client.services();cfg=self.cfg.model_copy(update={'register_date_mode':'folder'});found=set();missing=False
+            for link in links:
+                item=desktop_service.resolve_drive_link(drive,link)
+                if item.get('mimeType')!='application/vnd.google-apps.folder':missing=True;continue
+                try:found.add(desktop_service.completion_date(cfg,[item['name']]))
+                except ValueError:missing=True
+            return found,missing
+        def done(result):
+            if self.cloud_links.toPlainText().strip()!='\n'.join(links):return
+            found,missing=result
+            if len(found)==1 and not missing:self.set_detected_date(next(iter(found)),'已从云端文件夹名称识别日期')
+            elif len(found)>1 or found and missing:self.set_detected_date(None,'文件夹日期不一致或部分未识别，默认当天；可手动选择')
+            else:self.set_detected_date(None,'未识别到文件夹日期，默认当天')
+        worker=Worker(fetch);self.jobs.append(worker)
+        worker.result.connect(done)
+        worker.failed.connect(lambda _:self.set_detected_date(None,'识别失败，默认当天；可手动选择'))
+        def finished():
+            self.jobs.remove(worker);worker.deleteLater()
+            if self.auto_date and self.cloud_links.toPlainText().strip()!='\n'.join(links):self.cloud_date_timer.start()
+        worker.finished.connect(finished);worker.start()
     def dragEnterEvent(self,event):
         if event.mimeData().hasUrls():event.acceptProposedAction()
     def dropEvent(self,event):self.add_paths(u.toLocalFile() for u in event.mimeData().urls() if u.isLocalFile())
@@ -348,6 +457,30 @@ class Window(QMainWindow):
         self.production_layout=QComboBox();self.production_layout.addItem('按人物分组追加','grouped');self.production_layout.addItem('左侧第一组（自动识别列宽） 顶部插入（最新领取在上）','left_al');self.production_layout.setCurrentIndex(self.production_layout.findData(self.cfg.production_layout));v.addWidget(QLabel('制作表写入方式'));v.addWidget(self.production_layout)
         v.addWidget(button('选择素材文件夹',self.pick_download))
         self.voice_enabled=QCheckBox('下载完成后语音提醒（关闭后静默）');self.voice_enabled.setChecked(self.cfg.voice_enabled);v.addWidget(self.voice_enabled)
+        self.dark_mode=QCheckBox('启用暗黑模式');self.dark_mode.setChecked(self.cfg.dark_mode);self.dark_mode.toggled.connect(self.apply_theme);v.addWidget(self.dark_mode)
+        from .registration import LABELS
+        v=panel('成品登记表','附加成品登记表','可选：成品回填后追加一行。列字母可修改，留空代表不写入。类型、素材来源、软件和难易程度从登记表中的“分类”工作表读取。')
+        register_doc=field(v,'register_spreadsheet_id','登记表 Spreadsheet ID');field(v,'register_sheet','登记 Sheet 名称')
+        v.addWidget(button('读取分类选项',self.load_register_categories))
+        self.category_status=QLabel('填写登记表 ID 后读取“分类”工作表');self.category_status.setObjectName('muted');v.addWidget(self.category_status)
+        self.category_options={};self.category_source=None
+        register_doc.editingFinished.connect(lambda:self.load_register_categories() if register_doc.text().strip() and register_doc.text().strip()!=self.category_source and not self.jobs else None)
+        self.register_mapping=QTableWidget(len(LABELS),3);self.register_mapping.setHorizontalHeaderLabels(['字段','目标列（留空不写入）','默认值']);self.register_mapping.verticalHeader().hide();self.register_mapping.verticalHeader().setDefaultSectionSize(46);self.register_mapping.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch);self.register_mapping.setMinimumHeight(520)
+        for row,(key,label) in enumerate(LABELS.items()):
+            item=QTableWidgetItem(label);item.setData(Qt.ItemDataRole.UserRole,key);item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable);self.register_mapping.setItem(row,0,item)
+            self.register_mapping.setItem(row,1,QTableWidgetItem(self.cfg.register_columns.get(key,'')))
+            default=QTableWidgetItem(self.cfg.register_defaults.get(key,''));
+            if key!='group':default.setFlags(default.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.register_mapping.setItem(row,2,default)
+            if key in ('type','material','software','difficulty'):default.setText('在成品上传中选择')
+        v.addWidget(self.register_mapping)
+        self.duration_choices={}
+        for key,label in [('short','≤59 秒对应分类'),('long','≥60 秒对应分类')]:
+            box=QComboBox();box.addItem('','');value=self.cfg.register_duration_labels.get(key,'')
+            if value:box.addItem(value,value);box.setCurrentIndex(1)
+            self.duration_choices[key]=box;form=QFormLayout();form.addRow(label,box);v.addLayout(form)
+        tip=QLabel('日期使用回填当天；制作人自动读取；视频时长由 Drive 提供（秒）。未取得时长则留空。请从分类表 E 列选择两个时长对应值。')
+        tip.setWordWrap(True);tip.setObjectName('muted');v.addWidget(tip)
         v=panel('Google 授权','Google 账号连接','导入桌面应用 OAuth JSON，在系统浏览器中完成账号授权。')
         self.auth_label=QLabel('尚未检查授权状态');self.auth_label.setObjectName('notice');v.addWidget(self.auth_label);bar=QHBoxLayout()
         for text,fn in [('导入授权文件',self.import_auth),('Google 授权',self.authorize),('检查授权',self.auth_status),('清除本机登录',self.disconnect)]:bar.addWidget(button(text,fn))
@@ -357,6 +490,37 @@ class Window(QMainWindow):
         bar=QHBoxLayout();bar.addWidget(button('检查组件',self.check_components));bar.addWidget(button('安装 / 修复组件',self.repair));bar.addWidget(button('检查更新',self.update_info));v.addLayout(bar)
         footer=QHBoxLayout();hint=QLabel('保存后生效 · 不会修改已领取任务的命名');hint.setObjectName('muted');footer.addWidget(hint);footer.addStretch();footer.addWidget(button('保存设置',self.save,True));outer.addLayout(footer)
         self.pages.addWidget(page);self.check_components()
+    def load_register_categories(self):
+        doc=self.fields['register_spreadsheet_id'].text().strip()
+        if not doc:self.error('请先填写登记表 Spreadsheet ID');return
+        self.category_status.setText('正在读取“分类”工作表…')
+        def fetch(progress):
+            from .registration import read_categories
+            sheets,_=google_client.services()
+            return read_categories(sheets,doc)
+        self.run_job(fetch,lambda options:self.show_register_categories(doc,options))
+        if self.jobs:self.jobs[-1].failed.connect(lambda _:self.category_status.setText('分类读取失败，原有选择未修改；请检查 ID、授权及“分类”工作表'))
+    def show_register_categories(self,doc,options):
+        if self.fields['register_spreadsheet_id'].text().strip()!=doc:
+            self.category_status.setText('登记表 ID 已改变，请重新读取分类');return
+        self.category_source=doc;self.category_options=options
+        self.populate_upload_choices(options)
+        for row in range(self.register_mapping.rowCount()):
+            key=self.register_mapping.item(row,0).data(Qt.ItemDataRole.UserRole)
+            box=self.register_mapping.cellWidget(row,2)
+            if box is None:continue
+            current=box.currentData();box.clear();box.addItem('','')
+            for value in options.get(key,[]):box.addItem(value,value)
+            index=box.findData(current)
+            if index<0 and current:box.addItem(current+'（不在分类表中，请重新选择）',current);index=box.count()-1
+            box.setCurrentIndex(max(index,0))
+        for key,box in self.duration_choices.items():
+            current=box.currentData();box.clear();box.addItem('','')
+            for value in options.get('duration_class',[]):box.addItem(value,value)
+            index=box.findData(current)
+            if index<0 and current:box.addItem(current+'（不在分类表中，请重新选择）',current);index=box.count()-1
+            box.setCurrentIndex(max(index,0))
+        self.category_status.setText('已读取分类选项，请选择默认值和时长分类后保存')
     def source_rows(self):
         return [{'name':self.sources.item(r,0).text(),'alias':self.sources.item(r,1).text().strip(),
                  'enabled':self.sources.item(r,2).checkState()==Qt.CheckState.Checked,
@@ -404,7 +568,21 @@ class Window(QMainWindow):
     def save(self):
         if self.jobs:self.error('请等待后台操作结束后保存设置');return
         try:
-            values={k:w.text().strip() for k,w in self.fields.items()};values['production_layout']=self.production_layout.currentData();values['voice_enabled']=self.voice_enabled.isChecked()
+            values={k:w.text().strip() for k,w in self.fields.items()};values['production_layout']=self.production_layout.currentData();values['voice_enabled']=self.voice_enabled.isChecked();values['dark_mode']=self.dark_mode.isChecked()
+            values['register_columns']={self.register_mapping.item(r,0).data(Qt.ItemDataRole.UserRole):self.register_mapping.item(r,1).text().strip().upper() for r in range(self.register_mapping.rowCount()) if self.register_mapping.item(r,1).text().strip()}
+            values['register_defaults']={k:v for k,v in self.cfg.register_defaults.items() if k in ('type','material','software','difficulty')}
+            for r in range(self.register_mapping.rowCount()):
+                key=self.register_mapping.item(r,0).data(Qt.ItemDataRole.UserRole);box=self.register_mapping.cellWidget(r,2)
+                if key=='group':values['register_defaults'][key]=self.register_mapping.item(r,2).text().strip()
+                elif box is not None:values['register_defaults'][key]=box.currentData() or ''
+            values['register_duration_labels']={key:box.currentData() or '' for key,box in self.duration_choices.items()}
+            values['register_category_options']=self.category_options if self.category_source==values['register_spreadsheet_id'] else self.cfg.register_category_options
+            if values['register_spreadsheet_id'] and values['register_spreadsheet_id']!=self.cfg.register_spreadsheet_id and self.category_source!=values['register_spreadsheet_id']:
+                raise ValueError('登记表 ID 已改变，请先读取分类选项再保存')
+            if self.category_source==values['register_spreadsheet_id']:
+                for key in ('type','material','software','difficulty'):
+                    if values['register_defaults'].get(key) and values['register_defaults'][key] not in self.category_options.get(key,[]):raise ValueError('默认'+key+'不在分类表中，请重新选择')
+                if any(value and value not in self.category_options.get('duration_class',[]) for value in values['register_duration_labels'].values()):raise ValueError('时长分类不在分类表中，请重新选择')
             if values['source_spreadsheet_id']!=self.source_doc:raise ValueError('表格 ID 已改变，请先读取工作表再保存')
             rows=self.source_rows();mapping={}
             for row in rows:
@@ -413,7 +591,9 @@ class Window(QMainWindow):
                     if row['name'] in mapping:raise ValueError('工作表名称不能重复')
                     mapping[row['name']]=row['alias']
             values.update(source_sheets=list(mapping),requester_names=mapping,source_catalog=rows)
-            cfg=type(self.cfg).model_validate(self.cfg.model_dump()|values);save_settings(cfg);self.cfg=cfg;self.loaded([]);self.statusBar().showMessage('设置已保存，请刷新任务')
+            cfg=type(self.cfg).model_validate(self.cfg.model_dump()|values)
+            from .registration import validate
+            validate(cfg);save_settings(cfg);self.cfg=cfg;self.loaded([]);self.statusBar().showMessage('设置已保存，请刷新任务')
         except Exception as e:self.error(str(e))
     def import_auth(self):
         path=QFileDialog.getOpenFileName(self,'选择桌面 OAuth JSON','','JSON (*.json)')[0]

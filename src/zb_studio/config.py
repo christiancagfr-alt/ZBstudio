@@ -8,8 +8,11 @@ class SourceSheet(BaseModel):
     name:str
     alias:str
     enabled:bool=False
+def default_register_columns():
+    return {'date':'A','link':'B','group':'C','type':'D','difficulty':'E','material':'F','software':'G','producer':'H','duration':'AC','duration_class':'AB'}
 class Settings(BaseModel):
     voice_enabled:bool=True
+    dark_mode:bool=False
     producer:str=''
     prefix:str='ZB'
     source_spreadsheet_id:str=''
@@ -19,6 +22,14 @@ class Settings(BaseModel):
     production_layout:Literal['grouped','left_al']='grouped'
     download_path:str=str(Path.home()/'ZB Studio')
     drive_parent_folder_id:str=''
+    register_spreadsheet_id:str=''
+    register_sheet:str=''
+    register_columns:dict[str,str]=Field(default_factory=default_register_columns)
+    register_defaults:dict[str,str]=Field(default_factory=dict)
+    register_duration_labels:dict[str,str]=Field(default_factory=lambda:{'short':'一分钟以内','long':'一分钟以上'})
+    register_category_options:dict[str,list[str]]=Field(default_factory=dict)
+    register_date_mode:Literal['today','folder','manual']='today'
+    register_date:str=''
     start_date:str=''
     end_date:str=''
     requester_names:dict[str,str]=Field(default_factory=dict)

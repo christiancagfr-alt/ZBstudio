@@ -39,6 +39,63 @@ def test_upload_preflight_blocks_entire_batch(tmp_path,monkeypatch):
         service.upload_files(Settings(drive_parent_folder_id='root'),[good,bad],lambda s:None)
     assert not uploads
 
+def test_cloud_link_validation_and_preflight(monkeypatch):
+    from unittest.mock import MagicMock
+    drive=MagicMock();drive.files().get().execute.return_value={'id':'abc','name':'01-ZB-test-20261027.mp4','mimeType':'video/mp4'}
+    assert service.resolve_drive_link(drive,'https://drive.google.com/file/d/abc/view')['id']=='abc'
+    with pytest.raises(ValueError):service.resolve_drive_link(drive,'https://example.com/file/d/abc/view')
+    task=Task('doc','s',4,0,'人','张三','2026-10-27','正文',owner='佳佳',filename='01-ZB-test-20261027')
+    monkeypatch.setattr(service,'services',lambda:(None,drive));monkeypatch.setattr(service,'load_tasks',lambda *args:[task])
+    writes=[];monkeypatch.setattr(service,'write_completed',lambda *args:writes.append(args))
+    with pytest.raises(ValueError,match='重复匹配'):
+        service.complete_drive_links(Settings(producer='佳佳'),['https://drive.google.com/file/d/abc/view']*2,lambda _:None)
+    assert not writes
+
+def test_register_category_options_preserve_saved_choices(window,monkeypatch):
+    import zb_studio.desktop as desktop
+    saved=[];monkeypatch.setattr(desktop,'save_settings',lambda cfg:saved.append(cfg))
+    window.fields['register_spreadsheet_id'].setText('doc')
+    window.fields['register_sheet'].setText('登记')
+    options={'type':['视频','图片'],'material':['原创'],'software':['剪映'],'difficulty':['简单'],'duration_class':['一分钟以内','一分钟以上']}
+    window.show_register_categories('doc',options)
+    window.upload_choices['type'].setCurrentIndex(1)
+    window.save()
+    assert saved[-1].register_category_options['type']==['视频','图片']
+    assert saved[-1].register_duration_labels=={'short':'一分钟以内','long':'一分钟以上'}
+
+def test_dark_mode_preference_and_auto_date(window,monkeypatch,tmp_path):
+    import zb_studio.desktop as desktop
+    from PySide6.QtCore import QDate
+    saved=[];monkeypatch.setattr(desktop,'save_settings',lambda cfg:saved.append(cfg))
+    window.dark_mode.setChecked(True);window.save()
+    assert saved[-1].dark_mode and '#151c29' in window.styleSheet()
+    dated=tmp_path/'20261028'/'人物';dated.mkdir(parents=True);file=dated/'video.mp4';file.write_bytes(b'x')
+    window.add_paths([file]);assert window.upload_date.date()==QDate(2026,10,28)
+    window.upload_date.setDate(QDate(2026,10,29));assert not window.auto_date
+    window.detect_local_date();assert window.upload_date.date()==QDate(2026,10,29)
+    window.restore_auto_date();assert window.upload_date.date()==QDate(2026,10,28)
+    cfg=window.upload_settings();assert cfg.register_date_mode=='manual' and cfg.register_date=='2026-10-28'
+
+def test_auto_date_unknown_falls_back_to_today(window,tmp_path):
+    from PySide6.QtCore import QDate
+    file=tmp_path/'video.mp4';file.write_bytes(b'x')
+    window.add_paths([file]);assert window.upload_date.date()==QDate.currentDate()
+    assert '默认当天' in window.date_hint.text()
+
+def test_dark_theme_surfaces_and_upload_layout_on_small_window(window):
+    from PySide6.QtWidgets import QScrollArea
+    window.resize(920,600);window.dark_mode.setChecked(True);window.navigate(1);window.show();QApplication.processEvents()
+    area=window.pages.widget(1)
+    assert isinstance(area,QScrollArea) and area.widget().objectName()=='uploadContent'
+    for box in window.upload_choices.values():
+        assert box.height()>=36 and box.width()>=160
+        assert box.geometry().right()<=area.widget().width()
+    assert window.card_area.widget().objectName()=='cardShelf'
+    assert window.chart.backgroundBrush().color().name()=='#202c3d'
+    assert 'QScrollBar:horizontal' in window.styleSheet()
+    window.dark_mode.setChecked(False)
+    assert window.chart.backgroundBrush().color().name()=='#ffffff'
+
 def test_discovery_keeps_edited_alias_and_enabled_state(window):
     window.add_source('🧸辛一-佳佳-经营专业','自定义名字',True,42)
     window.choose_source_sheet([{'sheetId':42,'title':'辛一-新名称'},{'sheetId':43,'title':'🍇中磊-佳佳-经营'}])
