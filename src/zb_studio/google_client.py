@@ -98,9 +98,17 @@ def credentials():
         if not creds.valid:raise ValueError('Google 授权已失效，请重新授权')
         return creds
 
+def build_authorized_http(auth=None,timeout=120):
+    from googleapiclient.http import build_http
+    from google_auth_httplib2 import AuthorizedHttp
+    auth=auth or credentials()
+    http=build_http()
+    http.timeout=timeout
+    if hasattr(http,'redirect_codes'):
+        http.redirect_codes=http.redirect_codes-{308}
+    return AuthorizedHttp(auth,http=http)
+
 def services():
     from googleapiclient.discovery import build
-    from google_auth_httplib2 import AuthorizedHttp
-    import httplib2
     auth=credentials()
-    return tuple(build(name,version,http=AuthorizedHttp(auth,http=httplib2.Http(timeout=30)),cache_discovery=False) for name,version in [('sheets','v4'),('drive','v3')])
+    return tuple(build(name,version,http=build_authorized_http(auth),cache_discovery=False) for name,version in [('sheets','v4'),('drive','v3')])

@@ -195,7 +195,7 @@ def upload_files(cfg,paths,progress):
         plan.append((p,matches[0],match[1],record_date))
     for i,(p,t,day,record_date) in enumerate(plan):
         progress(f'{i+1}/{len(plan)} 正在上传 {p.name}')
-        url=upload_video(drive,p,cfg.drive_parent_folder_id,day,t.label)
+        url=upload_video(drive,p,cfg.drive_parent_folder_id,day,t.label,progress)
         duration=None
         if cfg.register_spreadsheet_id:
             try:duration=resolve_drive_link(drive,url).get('videoMediaMetadata',{}).get('durationMillis')

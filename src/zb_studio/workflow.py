@@ -164,7 +164,11 @@ def production_location(api,cfg,task):
             end=starts[i+1] if i+1<len(starts) else len(header)
             cmap={key_for(header[c]):c for c in range(start,end) if key_for(header[c])}
             if all(k in cmap for k in ('deadline','chinese','owner','filename','number')):matches.append((start,cmap))
-    if len(matches)!=1:raise ValueError(f'制作表未找到唯一匹配人物组：{task.label}；请核对第1行标题及第3行表头')
+    if len(matches)!=1:
+        raise ValueError(f'当前制作表写入方式为“按人物分组追加”，未找到唯一匹配的人物组：{task.label}。\n'
+                         '如果制作表是左侧统一表头、领取后在顶部插入的模板，'
+                         '请在系统设置的“制作表写入方式”选择“左侧第一组（自动识别列宽）顶部插入”，保存后重试。\n'
+                         '如果使用人物分组模板，请核对制作表第1行分组名称和字段表头。')
     _,cols=matches[0]
     used=[r for r in range(header_row+1,len(grid)) if any(c<len(grid[r]) and str(grid[r][c]).strip() for c in cols.values())]
     row=(max(used)+2) if used else header_row+2

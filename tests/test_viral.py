@@ -82,3 +82,9 @@ def test_upload_accepts_image_and_preserves_extension(tmp_path,monkeypatch):
     monkeypatch.setattr(desktop_service,'record',lambda *args:'op')
     assert desktop_service.upload_files(Settings(producer='制作人',drive_parent_folder_id='root'),[path],lambda _:None)==1
     assert sent==[path.name]
+
+
+def test_authorized_http_excludes_308_for_resumable_uploads():
+    from zb_studio.google_client import build_authorized_http
+    auth_http=build_authorized_http(auth=MagicMock())
+    assert 308 not in auth_http.http.redirect_codes

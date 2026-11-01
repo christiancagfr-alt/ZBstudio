@@ -7,7 +7,9 @@ def task(sheet='需求',start=0):
     return Task('source',sheet,4,start,'长文案','甲','2026-10-27','正文',columns=COLS.copy())
 def test_exact_group(monkeypatch):
     monkeypatch.setattr(w,'read_grid',lambda *args:[['超长文案'],[],['截至日期','中文','制作人','自动命名','序号']])
-    with pytest.raises(ValueError,match='唯一匹配'):w.production_location(None,Settings(),task())
+    with pytest.raises(ValueError,match='唯一匹配') as error:w.production_location(None,Settings(),task())
+    assert '制作表写入方式' in str(error.value)
+    assert '左侧第一组' in str(error.value)
 def test_reserve_target_rows(monkeypatch):
     items=[task(),task('另一需求',11)]
     monkeypatch.setattr(w,'load_tasks',lambda *args:items)

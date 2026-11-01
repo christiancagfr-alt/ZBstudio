@@ -167,9 +167,11 @@ def test_compact_layout_and_silent_notifications(window,monkeypatch):
 
 def test_voice_preference_and_stat_alignment(window,monkeypatch):
     import zb_studio.desktop as desktop
+    from PySide6.QtCore import QDate
     saved=[];monkeypatch.setattr(desktop,'save_settings',lambda cfg:saved.append(cfg))
     window.voice_enabled.setChecked(False);window.save()
     assert saved[-1].voice_enabled is False
+    window.stats_from.setDate(QDate(2026,10,1));window.stats_to.setDate(QDate(2026,10,31))
     t=Task('doc','s',4,0,'人物','张三','2026-10-27','正文')
     window.loaded([t]);window.refresh_stats()
     assert window.stats.item(0,1).textAlignment()==Qt.AlignmentFlag.AlignCenter
