@@ -176,3 +176,39 @@ def test_claim_order_is_request_order_not_source_or_deadline(monkeypatch,tmp_pat
     result=w.claim(None,cfg,[first.identity,second.identity])
     assert [(x['id'],x['number']) for x in result]==[(first.identity,'01'),(second.identity,'02')]
     assert result[0]['filename'].startswith('01-')
+
+
+def test_per_spreadsheet_sequence_and_requested_start(monkeypatch,tmp_path):
+    a=task('sheet1');b=task('sheet2');c=task('sheet1');c.source_id='other';c.requester='乙'
+    monkeypatch.setattr(w,'load_tasks',lambda *args:[a,b,c])
+    monkeypatch.setattr(w,'production_location',lambda *a:(2,COLS))
+    monkeypatch.setattr(w,'read_grid',lambda *a:[['截至日期','中文','制作人','自动命名','序号','完成进度','成品链接']])
+    monkeypatch.setattr(w,'record',lambda *a:'op');monkeypatch.setattr(w,'batch_write',lambda *a:None)
+    cfg=Settings(producer='佳佳',production_sheet='制作',production_spreadsheet_id='prod',download_path=str(tmp_path),sequence_mode='per_source',sequence_start=20)
+    result=w.claim(None,cfg,[a.identity,b.identity,c.identity])
+    assert [x['number'] for x in result]==['20','21','20']
+
+def test_manual_sequence_reuses_after_cleanup_but_stops_on_collision(monkeypatch,tmp_path):
+    from datetime import date
+    from zb_studio import journal
+    monkeypatch.setattr(journal,'path',lambda:tmp_path/'settings.json')
+    t=task();monkeypatch.setattr(w,'load_tasks',lambda *a:[t])
+    monkeypatch.setattr(w,'production_location',lambda *a:(2,COLS))
+    monkeypatch.setattr(w,'read_grid',lambda *a:[['截至日期','中文','制作人','自动命名','序号','完成进度','成品链接']])
+    writes=[];monkeypatch.setattr(w,'batch_write',lambda *a:writes.append(a));monkeypatch.setattr(w,'record',lambda *a:'op')
+    cfg=Settings(producer='佳佳',production_sheet='制作',production_spreadsheet_id='prod',download_path=str(tmp_path),sequence_override=1)
+    folder=tmp_path/date.today().strftime('%Y%m%d');folder.mkdir();(folder/'01.png').write_bytes(b'old')
+    with pytest.raises(ValueError,match='序号 01 已被'):w.claim(None,cfg,[t.identity])
+    assert not writes
+    (folder/'01.png').unlink()
+    result=w.claim(None,cfg,[t.identity]);assert result[0]['number']=='01'
+
+def test_manual_sequence_checks_existing_production_name(monkeypatch,tmp_path):
+    from datetime import date
+    t=task();name=w.make_filename(t,'01','ZB','佳佳',date.today())
+    monkeypatch.setattr(w,'load_tasks',lambda *a:[t]);monkeypatch.setattr(w,'production_location',lambda *a:(2,COLS))
+    monkeypatch.setattr(w,'read_grid',lambda *a:[['截至日期','中文','制作人','自动命名','序号','完成进度','成品链接'],['','','',name]])
+    writes=[];monkeypatch.setattr(w,'batch_write',lambda *a:writes.append(a))
+    cfg=Settings(producer='佳佳',production_sheet='制作',production_spreadsheet_id='prod',download_path=str(tmp_path),sequence_override=1)
+    with pytest.raises(ValueError,match='已有本批自动命名'):w.claim(None,cfg,[t.identity])
+    assert not writes

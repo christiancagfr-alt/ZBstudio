@@ -6,7 +6,7 @@ from html import escape
 from pathlib import Path
 from PySide6.QtCore import Qt, QThread, Signal, QUrl, QTimer, QDate, QLocale
 from PySide6.QtGui import QDesktopServices,QPixmap,QColor,QIcon
-from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QGridLayout,QPushButton,QLabel,QLineEdit,QComboBox,QTableWidget,QTableWidgetItem,QHeaderView,QStackedWidget,QFormLayout,QFileDialog,QMessageBox,QScrollArea,QAbstractItemView,QInputDialog,QTabWidget,QFrame,QCheckBox,QProgressBar,QPlainTextEdit,QDateEdit)
+from PySide6.QtWidgets import (QApplication,QMainWindow,QWidget,QVBoxLayout,QHBoxLayout,QGridLayout,QPushButton,QLabel,QLineEdit,QComboBox,QTableWidget,QTableWidgetItem,QHeaderView,QStackedWidget,QFormLayout,QFileDialog,QMessageBox,QScrollArea,QAbstractItemView,QInputDialog,QTabWidget,QFrame,QCheckBox,QProgressBar,QPlainTextEdit,QDateEdit,QSpinBox)
 from PySide6.QtNetwork import QNetworkAccessManager,QNetworkRequest
 from .config import load_settings,save_settings,source_documents
 from . import google_client,desktop_service
@@ -77,6 +77,7 @@ class Window(QMainWindow):
         for name,idx,mine,art in [('任务大厅',0,False,'home'),('我的制作',0,True,'work'),('成品上传',1,False,'upload'),('任务统计',2,False,'stats'),('系统设置',3,False,'settings'),('操作记录',4,False,'work')]:
             b=button(name,lambda i=idx,m=mine:self.navigate(i,m));b.setObjectName('nav');b.setIcon(icon(art));b.setProperty('art',art);b.setCheckable(True);nav.addWidget(b);self.nav_buttons.append((b,idx,mine))
         self.nav_buttons[0][0].setChecked(True);self.nav_buttons[0][0].setIcon(icon('home','#ffffff'))
+        update_button=button('检查更新',self.update_info);update_button.setObjectName('nav');nav.addWidget(update_button)
         nav.addStretch()
         for link in self.sheet_links:nav.addWidget(link)
         foot=QLabel(f'ZB STUDIO\n桌面工作台 · V{APP_VERSION}');foot.setObjectName('muted');nav.addWidget(foot)
@@ -162,7 +163,8 @@ class Window(QMainWindow):
         modes=QHBoxLayout();modes.addWidget(button('人物卡片',lambda:self.set_list_mode(False),True));modes.addWidget(button('完整列表',lambda:self.set_list_mode(True)));self.count=QLabel('尚未加载任务');modes.addWidget(self.count,1);v.addLayout(modes)
         self.task_table=table(['选择','序号','需求者 / 人物','需求日期','中文文案','外语文案','图片','制作人','进度','自动命名','成品链接','播放量','爆帖状态']);self.task_table.setColumnWidth(4,250);self.task_table.setColumnWidth(9,250);self.task_table.setColumnWidth(6,72);v.addWidget(self.task_table,1)
         self.task_table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
-        actions=QHBoxLayout();self.select_all=QCheckBox('全选当前可领取');self.select_all.clicked.connect(self.toggle_all);actions.addWidget(self.select_all);actions.addWidget(button('领取勾选任务',self.claim,True));self.download_image_sources=QCheckBox('图片需求也下载素材');self.download_image_sources.setToolTip('视频需求仍自动下载；图片需求默认不下载。');actions.addWidget(self.download_image_sources);actions.addWidget(button('下载 / 重试选中行素材',self.download));actions.addStretch();v.addLayout(actions);self.pages.addWidget(page)
+        actions=QHBoxLayout();self.select_all=QCheckBox('全选当前可领取');self.select_all.clicked.connect(self.toggle_all);actions.addWidget(self.select_all);actions.addWidget(button('领取勾选任务',self.claim,True));self.download_image_sources=QCheckBox('图片需求也下载素材');self.download_image_sources.setToolTip('视频需求仍自动下载；图片需求默认不下载。');actions.addWidget(self.download_image_sources);actions.addWidget(button('下载 / 重试选中行素材',self.download));actions.addStretch();v.addLayout(actions)
+        number_bar=QHBoxLayout();self.override_number=QCheckBox('本次指定起始号');number_bar.addWidget(self.override_number);self.claim_start=QSpinBox();self.claim_start.setRange(1,999999);self.claim_start.setValue(self.cfg.sequence_start);self.claim_start.setEnabled(False);self.override_number.toggled.connect(self.claim_start.setEnabled);self.claim_start.setMaximumWidth(90);number_bar.addWidget(self.claim_start);hint=QLabel('勾选后本次从指定号码开始；冲突时停止');hint.setObjectName('muted');number_bar.addWidget(hint);number_bar.addStretch();v.addLayout(number_bar);self.pages.addWidget(page)
     def set_list_mode(self,full):
         self.full_list_mode=full;self.card_area.setVisible(not full)
         if full:self.group_filter=None
@@ -246,13 +248,14 @@ class Window(QMainWindow):
     def sync_views(self):
         key=self.group_filter;self.loaded(self.tasks);self.group_filter=key;self.refresh_table();self.refresh_stats()
     def start_claim(self,ids):
-        download_images=self.download_image_sources.isChecked();cfg=self.cfg.model_copy(deep=True)
+        download_images=self.download_image_sources.isChecked();cfg=self.cfg.model_copy(update={'sequence_override':self.claim_start.value() if self.override_number.isChecked() else None},deep=True)
         self.run_job(lambda p:desktop_service.claim_tasks(cfg,ids,p,download_images),self.claimed)
     def claim(self):
         ids=[t.identity for r,t in enumerate(self.visible) if self.task_table.item(r,0).checkState()==Qt.CheckState.Checked]
         if not ids:self.error('请勾选可领取任务');return
         self.start_claim(ids)
     def claimed(self,result):
+        self.override_number.setChecked(False)
         items=result['claimed'];fresh=result.get('fresh_tasks')
         if fresh is not None:
             key=self.group_filter;self.loaded(fresh);self.group_filter=key;self.refresh_table();self.refresh_stats()
@@ -268,7 +271,7 @@ class Window(QMainWindow):
         if row<0:return
         t=self.visible[row]
         if t.owner!=self.cfg.producer or not t.filename:self.error('请选择自己已领取的任务');return
-        self.run_job(lambda p:desktop_service.download_claim_image(self.cfg,{'id':t.identity,'filename':t.filename,'deadline':t.deadline,'image':t.image,'date':t.filename.rsplit('-',1)[-1],'folder':t.label,'number':t.number},p),lambda path:(self.log('已保存：'+path),self.announce('下载完成')))
+        self.run_job(lambda p:desktop_service.download_claim_image(self.cfg,{'id':t.identity,'source_id':t.source_id,'filename':t.filename,'deadline':t.deadline,'image':t.image,'date':t.filename.rsplit('-',1)[-1],'folder':t.label,'number':t.number},p),lambda path:(self.log('已保存：'+path),self.announce('下载完成')))
     def build_upload(self):
         page=QWidget();page.setObjectName('uploadContent');v=QVBoxLayout(page);v.setContentsMargins(16,12,16,16);v.setSpacing(8);v.addWidget(QLabel('拖入成品文件，或选择文件 / 文件夹。上传前检查整个队列，失败即停止。'))
         choices=QGridLayout();choices.setHorizontalSpacing(12);choices.setVerticalSpacing(8);self.upload_choices={}
@@ -463,7 +466,7 @@ class Window(QMainWindow):
         doc=field(v,'source_spreadsheet_id','Spreadsheet ID');doc.setPlaceholderText('Google 表格网址 /d/ 与 /edit 之间的 ID')
         doc.editingFinished.connect(self.auto_discover_sources)
         actions=QHBoxLayout();self.discover_button=button('读取 / 刷新工作表',self.pick_source_sheet,True);actions.addWidget(self.discover_button)
-        actions.addWidget(button('全选',lambda:self.select_sources(True)));actions.addWidget(button('取消全选',lambda:self.select_sources(False)));actions.addStretch();v.addLayout(actions)
+        actions.addWidget(button('全选',lambda:self.select_sources(True)));actions.addWidget(button('取消全选',lambda:self.select_sources(False)));actions.addWidget(button('删除选中工作表',self.remove_primary_sources));actions.addWidget(button('折叠 / 展开',self.toggle_primary_sources));actions.addStretch();v.addLayout(actions)
         self.source_summary=QLabel('尚未读取工作表');self.source_summary.setObjectName('muted');v.addWidget(self.source_summary)
         self.sources=table(['实际 Sheet 名称','需求者别名','启用','需求类型']);self.sources.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked|QAbstractItemView.EditTrigger.EditKeyPressed|QAbstractItemView.EditTrigger.SelectedClicked)
         self.sources.horizontalHeader().setStretchLastSection(False);self.sources.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch);self.sources.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.Stretch);self.sources.setColumnWidth(2,80);self.sources.setColumnWidth(3,120);self.sources.setMinimumHeight(310)
@@ -472,17 +475,18 @@ class Window(QMainWindow):
             for row in self.cfg.source_catalog:self.add_source(row.name,row.alias,row.enabled,row.sheet_id,row.task_type)
         else:
             for name in self.cfg.source_sheets:self.add_source(name,self.cfg.requester_names.get(name) or suggest_alias(name),True)
-        self.sources.itemChanged.connect(self.update_source_summary);self.update_source_summary();v.addWidget(self.sources)
+        self.sources.itemChanged.connect(self.update_source_summary);self.update_source_summary();v.addWidget(self.sources);self.sources.setVisible(not self.cfg.primary_source_collapsed)
         notice=QLabel('例如：需求者-制作人-业务分类 → 需求者。只读取勾选项；再次刷新会保留手动别名。');notice.setObjectName('notice');notice.setWordWrap(True);v.addWidget(notice)
         extra_title=QLabel('其他需求来源');extra_title.setObjectName('sectionTitle');v.addWidget(extra_title)
         self.extra_id=QLineEdit();self.extra_id.setPlaceholderText('填写其他 Spreadsheet ID，点击读取并勾选工作表');v.addWidget(self.extra_id)
-        v.addWidget(button('读取其他来源工作表',self.discover_extra_sources))
-        self.extra_sources=table(['Spreadsheet ID','实际 Sheet 名称','需求者别名','启用','需求类型']);self.extra_sources.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked|QAbstractItemView.EditTrigger.EditKeyPressed|QAbstractItemView.EditTrigger.SelectedClicked);self.extra_sources.setMinimumHeight(200)
+        extra_actions=QHBoxLayout();extra_actions.addWidget(button('读取其他来源工作表',self.discover_extra_sources));extra_actions.addWidget(button('删除选中工作表',self.remove_extra_sources));extra_actions.addWidget(button('删除所选来源',self.remove_extra_document));extra_actions.addWidget(button('折叠 / 展开来源',self.toggle_extra_sources));self.extra_group=QComboBox();self.extra_group.addItem('全部其他来源','');extra_actions.addWidget(self.extra_group,1);v.addLayout(extra_actions)
+        self.extra_collapsed=set(self.cfg.collapsed_source_ids)
+        self.extra_sources=table(['Spreadsheet ID','实际 Sheet 名称','需求者别名','启用','需求类型']);self.extra_sources.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked|QAbstractItemView.EditTrigger.EditKeyPressed|QAbstractItemView.EditTrigger.SelectedClicked);self.extra_sources.setMinimumHeight(0);self.extra_sources.setMaximumHeight(360)
         self.extra_sources.horizontalHeader().setSectionResizeMode(0,QHeaderView.ResizeMode.Stretch);self.extra_sources.horizontalHeader().setSectionResizeMode(1,QHeaderView.ResizeMode.Stretch);self.extra_sources.horizontalHeader().setSectionResizeMode(2,QHeaderView.ResizeMode.Stretch);self.extra_sources.setColumnWidth(3,70)
         for doc in source_documents(self.cfg):
             if doc.spreadsheet_id!=self.cfg.source_spreadsheet_id:
                 for row in doc.sheets:self.add_extra_source(doc.spreadsheet_id,row.name,row.alias,row.enabled,row.sheet_id,row.task_type)
-        v.addWidget(self.extra_sources)
+        v.addWidget(self.extra_sources);self.apply_extra_visibility()
         v=panel('表头别名','任务表字段识别','填写表格实际使用的字段名称，多个名称用中文或英文逗号隔开。适用于需求表和制作表；原有标准表头仍可使用。请避免将同一名称分配给不同字段。')
         self.header_mapping=QTableWidget(len(ALIASES),2);self.header_mapping.setObjectName('headerMapping');self.header_mapping.setHorizontalHeaderLabels(['标准字段','自定义表头名称（双击编辑）']);self.header_mapping.verticalHeader().hide();self.header_mapping.verticalHeader().setDefaultSectionSize(46);self.header_mapping.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch);self.header_mapping.setShowGrid(False);self.header_mapping.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff);self.header_mapping.setFixedHeight(len(ALIASES)*46+58)
         for row,(key,names) in enumerate(ALIASES.items()):
@@ -492,6 +496,8 @@ class Window(QMainWindow):
         v=panel('制作与文件','个人制作配置','配置制作人及唯一制作工作表，指定素材和成品的存放位置。')
         for key,label in [('producer','制作人姓名'),('production_sheet','制作 Sheet 名称'),('production_spreadsheet_id','制作表 Spreadsheet ID'),('prefix','命名前缀'),('download_path','素材下载根目录'),('drive_parent_folder_id','Drive 父文件夹 ID')]:field(v,key,label)
         self.production_layout=QComboBox();self.production_layout.addItem('按人物分组追加','grouped');self.production_layout.addItem('左侧第一组（自动识别列宽） 顶部插入（最新领取在上）','left_al');self.production_layout.setCurrentIndex(self.production_layout.findData(self.cfg.production_layout));v.addWidget(QLabel('制作表写入方式'));v.addWidget(self.production_layout)
+        sequence_form=QFormLayout();self.sequence_start=QSpinBox();self.sequence_start.setRange(1,999999);self.sequence_start.setValue(self.cfg.sequence_start);sequence_form.addRow('默认起始序号',self.sequence_start)
+        self.sequence_mode=QComboBox();self.sequence_mode.addItem('全部来源连续编号','combined');self.sequence_mode.addItem('每个表格独立编号','per_source');self.sequence_mode.setCurrentIndex(max(0,self.sequence_mode.findData(self.cfg.sequence_mode)));sequence_form.addRow('多表格编号方式',self.sequence_mode);v.addLayout(sequence_form)
         v.addWidget(button('选择素材文件夹',self.pick_download))
         self.voice_enabled=QCheckBox('下载完成后语音提醒（关闭后静默）');self.voice_enabled.setChecked(self.cfg.voice_enabled);v.addWidget(self.voice_enabled)
         self.dark_mode=QCheckBox('启用暗黑模式');self.dark_mode.setChecked(self.cfg.dark_mode);self.dark_mode.toggled.connect(self.apply_theme);v.addWidget(self.dark_mode)
@@ -524,9 +530,48 @@ class Window(QMainWindow):
         v.addLayout(bar)
         v=panel('组件与更新','运行环境','检查 GitHub Release。更新包下载后先校验 SHA-256，再启动对应系统的安装流程。')
         self.components=table(['组件','版本','状态']);self.components.setMinimumHeight(350);self.components.setColumnWidth(0,260);self.components.setColumnWidth(1,240);v.addWidget(self.components)
-        bar=QHBoxLayout();bar.addWidget(button('检查组件',self.check_components));bar.addWidget(button('安装 / 修复组件',self.repair));bar.addWidget(button('检查更新',self.update_info));v.addLayout(bar)
+        bar=QHBoxLayout();bar.addWidget(button('检查组件',self.check_components));bar.addWidget(button('安装 / 修复组件',self.repair));v.addLayout(bar)
         footer=QHBoxLayout();hint=QLabel('保存后生效 · 不会修改已领取任务的命名');hint.setObjectName('muted');footer.addWidget(hint);footer.addStretch();footer.addWidget(button('保存设置',self.save,True));outer.addLayout(footer)
         self.pages.addWidget(page);self.check_components()
+    @staticmethod
+    def normalize_source_id(value):
+        import re
+        text=value.strip();match=re.search(r'^https://docs\.google\.com/spreadsheets/d/([A-Za-z0-9_-]+)(?:/|$)',text)
+        return match.group(1) if match else text
+    def remove_primary_sources(self):
+        rows=sorted({index.row() for index in self.sources.selectedIndexes()},reverse=True)
+        for row in rows:self.sources.removeRow(row)
+        self.update_source_summary()
+    def toggle_primary_sources(self):
+        self.sources.setVisible(self.sources.isHidden())
+    def refresh_extra_groups(self):
+        current=self.extra_group.currentData() or '';docs=sorted({self.extra_sources.item(r,0).text() for r in range(self.extra_sources.rowCount()) if self.extra_sources.item(r,0)})
+        self.extra_group.blockSignals(True);self.extra_group.clear();self.extra_group.addItem('全部其他来源','')
+        for doc in docs:self.extra_group.addItem(('▶ ' if doc in self.extra_collapsed else '▼ ')+doc,doc)
+        index=self.extra_group.findData(current);self.extra_group.setCurrentIndex(max(0,index));self.extra_group.blockSignals(False)
+    def apply_extra_visibility(self):
+        for r in range(self.extra_sources.rowCount()):self.extra_sources.setRowHidden(r,self.extra_sources.item(r,0).text() in self.extra_collapsed)
+        visible=sum(not self.extra_sources.isRowHidden(r) for r in range(self.extra_sources.rowCount()))
+        self.extra_sources.setMaximumHeight(max(55,min(360,visible*52+55)))
+    def toggle_extra_sources(self):
+        doc=self.extra_group.currentData()
+        docs={self.extra_sources.item(r,0).text() for r in range(self.extra_sources.rowCount())}
+        if not doc:
+            self.extra_collapsed=set() if docs and docs<=self.extra_collapsed else docs
+        elif doc in self.extra_collapsed:self.extra_collapsed.remove(doc)
+        else:self.extra_collapsed.add(doc)
+        self.extra_sources.clearSelection();self.apply_extra_visibility();self.refresh_extra_groups()
+    def remove_extra_sources(self):
+        rows=sorted({index.row() for index in self.extra_sources.selectedIndexes()},reverse=True)
+        if not rows:self.statusBar().showMessage('请先在表格中选中要删除的工作表');return
+        for row in rows:self.extra_sources.removeRow(row)
+        self.refresh_extra_groups();self.apply_extra_visibility()
+    def remove_extra_document(self):
+        doc=self.extra_group.currentData()
+        if not doc:self.statusBar().showMessage('请先选择要删除的来源 ID');return
+        for row in reversed(range(self.extra_sources.rowCount())):
+            if self.extra_sources.item(row,0).text()==doc:self.extra_sources.removeRow(row)
+        self.extra_collapsed.discard(doc);self.refresh_extra_groups();self.apply_extra_visibility()
     def add_extra_source(self,doc,name,alias,enabled,sheet_id=None,task_type='video'):
         r=self.extra_sources.rowCount();self.extra_sources.insertRow(r)
         for c,value in enumerate((doc,name,alias)):
@@ -534,15 +579,18 @@ class Window(QMainWindow):
             if c<2:item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             if c==1:item.setData(Qt.ItemDataRole.UserRole,sheet_id)
             self.extra_sources.setItem(r,c,item)
-        check=QTableWidgetItem();check.setFlags(Qt.ItemFlag.ItemIsEnabled|Qt.ItemFlag.ItemIsUserCheckable|Qt.ItemFlag.ItemIsSelectable);check.setCheckState(Qt.CheckState.Checked if enabled else Qt.CheckState.Unchecked);self.extra_sources.setItem(r,3,check);self.extra_sources.setCellWidget(r,4,self.source_type_combo(task_type))
+        check=QTableWidgetItem();check.setFlags(Qt.ItemFlag.ItemIsEnabled|Qt.ItemFlag.ItemIsUserCheckable|Qt.ItemFlag.ItemIsSelectable);check.setCheckState(Qt.CheckState.Checked if enabled else Qt.CheckState.Unchecked);self.extra_sources.setItem(r,3,check);self.extra_sources.setCellWidget(r,4,self.source_type_combo(task_type));self.refresh_extra_groups()
     def discover_extra_sources(self):
         doc=self.extra_id.text().strip()
+        doc=self.normalize_source_id(doc);self.extra_id.setText(doc)
         if not doc or doc==self.source_doc:self.error('请填写与主来源不同的 Spreadsheet ID');return
         def fetch(progress):
             from .workflow import list_sheet_metadata
             sheets,_=google_client.services();return list_sheet_metadata(sheets,doc)
         self.run_job(fetch,lambda tabs:self.show_extra_sources(doc,tabs))
     def show_extra_sources(self,doc,tabs):
+        if self.normalize_source_id(self.extra_id.text())!=doc:
+            self.statusBar().showMessage('来源 ID 已改变，请重新读取工作表');return
         previous=[]
         for r in range(self.extra_sources.rowCount()):
             if self.extra_sources.item(r,0).text()==doc:
@@ -551,7 +599,10 @@ class Window(QMainWindow):
         for r in reversed(range(self.extra_sources.rowCount())):
             if self.extra_sources.item(r,0).text()==doc:self.extra_sources.removeRow(r)
         for row in rows:self.add_extra_source(doc,row['name'],row['alias'],row['enabled'],row['sheet_id'],row['task_type'])
-        self.statusBar().showMessage('已读取其他来源，请勾选工作表并保存设置')
+        self.extra_collapsed.discard(doc);self.refresh_extra_groups();self.extra_group.setCurrentIndex(max(0,self.extra_group.findData(doc)));self.apply_extra_visibility()
+        for r in range(self.extra_sources.rowCount()):
+            if self.extra_sources.item(r,0).text()==doc:self.extra_sources.scrollToItem(self.extra_sources.item(r,0));break
+        self.statusBar().showMessage('已读取来源 '+doc+'，请勾选工作表并保存设置')
     def load_register_categories(self):
         doc=self.fields['register_spreadsheet_id'].text().strip()
         if not doc:self.error('请先填写登记表 Spreadsheet ID');return
@@ -596,7 +647,7 @@ class Window(QMainWindow):
         if doc and doc!=self.source_doc and not self.jobs:self.pick_source_sheet()
     def pick_source_sheet(self):
         if self.jobs:self.error('请等待当前操作完成');return
-        doc=self.fields['source_spreadsheet_id'].text().strip()
+        doc=self.normalize_source_id(self.fields['source_spreadsheet_id'].text());self.fields['source_spreadsheet_id'].setText(doc)
         if not doc:self.error('请先填写 Spreadsheet ID');return
         self.requested_source_doc=doc;self.discover_button.setEnabled(False);self.source_summary.setText('正在读取 Google 工作表…')
         def fetch(progress):
@@ -632,7 +683,7 @@ class Window(QMainWindow):
     def save(self):
         if self.jobs:self.error('请等待后台操作结束后保存设置');return
         try:
-            values={k:w.text().strip() for k,w in self.fields.items()};values['production_layout']=self.production_layout.currentData();values['voice_enabled']=self.voice_enabled.isChecked();values['dark_mode']=self.dark_mode.isChecked()
+            values={k:w.text().strip() for k,w in self.fields.items()};values['production_layout']=self.production_layout.currentData();values['voice_enabled']=self.voice_enabled.isChecked();values['dark_mode']=self.dark_mode.isChecked();values['sequence_start']=self.sequence_start.value();values['sequence_mode']=self.sequence_mode.currentData();values['sequence_override']=None;values['collapsed_source_ids']=sorted(self.extra_collapsed);values['primary_source_collapsed']=self.sources.isHidden()
             import re
             aliases={};used={normalize(name):key for key,names in ALIASES.items() for name in names}
             for r in range(self.header_mapping.rowCount()):
@@ -670,13 +721,14 @@ class Window(QMainWindow):
             extras={}
             for r in range(self.extra_sources.rowCount()):
                 doc=self.extra_sources.item(r,0).text().strip();name=self.extra_sources.item(r,1).text().strip();alias=self.extra_sources.item(r,2).text().strip();enabled=self.extra_sources.item(r,3).checkState()==Qt.CheckState.Checked
+                if doc==values['source_spreadsheet_id']:raise ValueError('主来源与其他来源的 Spreadsheet ID 重复，请删除重复来源后保存')
                 if enabled and not alias:raise ValueError('已启用工作表必须填写需求者别名')
                 extras.setdefault(doc,[]).append({'name':name,'alias':alias,'enabled':enabled,'sheet_id':self.extra_sources.item(r,1).data(Qt.ItemDataRole.UserRole),'task_type':self.extra_sources.cellWidget(r,4).currentData()})
             documents.extend({'spreadsheet_id':doc,'sheets':entries} for doc,entries in extras.items())
             values['source_documents']=documents
             cfg=type(self.cfg).model_validate(self.cfg.model_dump()|values)
             from .registration import validate
-            validate(cfg);save_settings(cfg);self.cfg=cfg;self.loaded([]);self.statusBar().showMessage('设置已保存，请刷新任务')
+            validate(cfg);save_settings(cfg);self.cfg=cfg;self.claim_start.setValue(cfg.sequence_start);self.loaded([]);self.statusBar().showMessage('设置已保存，请刷新任务')
         except Exception as e:self.error(str(e))
     def import_auth(self):
         path=QFileDialog.getOpenFileName(self,'选择桌面 OAuth JSON','','JSON (*.json)')[0]

@@ -124,3 +124,16 @@ def test_mixed_source_download_policy(monkeypatch,download_images,expected):
     assert downloads==expected
     assert len(result['skipped_downloads'])==(0 if download_images else 1)
     assert not result['failed_downloads']
+
+
+def test_per_source_downloads_do_not_collide(tmp_path,monkeypatch):
+    from zb_studio import desktop_service as service,image_fetch
+    from PySide6.QtGui import QImage
+    from PySide6.QtCore import QBuffer,QIODevice
+    from pathlib import Path
+    image=QImage(2,2,QImage.Format.Format_RGB32);image.fill(0);buffer=QBuffer();buffer.open(QIODevice.OpenModeFlag.WriteOnly);image.save(buffer,'PNG')
+    monkeypatch.setattr(image_fetch,'fetch_image',lambda *a,**k:bytes(buffer.data()));monkeypatch.setattr(service,'record',lambda *a:None)
+    cfg=Settings(download_path=str(tmp_path),sequence_mode='per_source')
+    item={'image':'url','number':'01','date':'20261102','folder':'人','id':'id','source_id':'source1'}
+    first=Path(service.download_claim_image(cfg,item));item['source_id']='source2';second=Path(service.download_claim_image(cfg,item))
+    assert first.name==second.name=='01.png' and first.parent!=second.parent

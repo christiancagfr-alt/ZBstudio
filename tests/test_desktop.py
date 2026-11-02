@@ -286,3 +286,44 @@ def test_claim_refresh_shows_real_owner_and_failed_refresh_marks_unknown(window,
     actual=Task('doc','s',4,0,'人','甲','2026-11-02','正文',owner='别人')
     window.loaded([actual]);assert window.task_table.item(0,7).text()=='别人'
     window.loaded([t]);assert window.task_table.item(0,7).text()==''
+
+
+def test_source_delete_fold_and_id_change(window,monkeypatch):
+    import zb_studio.desktop as desktop
+    saved=[];monkeypatch.setattr(desktop,'save_settings',lambda cfg:saved.append(cfg))
+    window.add_source('保留','甲',True,1);window.add_source('删除','乙',True,2)
+    window.sources.selectRow(1);window.remove_primary_sources()
+    assert window.sources.rowCount()==1 and window.sources.item(0,0).text()=='保留'
+    window.add_extra_source('old','旧表','乙',True,3);window.add_extra_source('new','新表','丙',True,4)
+    window.extra_group.setCurrentIndex(window.extra_group.findData('old'));window.toggle_extra_sources()
+    assert window.extra_sources.isRowHidden(0) and not window.extra_sources.isRowHidden(1)
+    window.toggle_extra_sources();assert not window.extra_sources.isRowHidden(0)
+    window.extra_sources.selectRow(0);window.remove_extra_sources()
+    assert window.extra_sources.rowCount()==1 and window.extra_sources.item(0,0).text()=='new'
+    window.extra_id.setText('newer');window.show_extra_sources('new',[{'sheetId':5,'title':'过期回调'}])
+    assert window.extra_sources.item(0,1).text()=='新表'
+    window.save();assert saved[-1].source_documents[0].spreadsheet_id=='new'
+
+def test_sequence_settings_and_one_time_override(window,monkeypatch):
+    import zb_studio.desktop as desktop
+    saved=[];monkeypatch.setattr(desktop,'save_settings',lambda cfg:saved.append(cfg))
+    window.sequence_start.setValue(20);window.sequence_mode.setCurrentIndex(1);window.save()
+    assert saved[-1].sequence_start==20 and saved[-1].sequence_mode=='per_source'
+    assert window.claim_start.value()==20 and not window.override_number.isChecked()
+
+
+def test_extra_source_read_new_id_and_keep_existing(window,monkeypatch):
+    window.add_extra_source('old','旧 Sheet','旧别名',True,2,'image')
+    window.extra_id.setText('https://docs.google.com/spreadsheets/d/new/edit#gid=0')
+    window.show_extra_sources('new',[{'sheetId':2,'title':'新 Sheet'}])
+    assert [(window.extra_sources.item(r,0).text(),window.extra_sources.item(r,1).text()) for r in range(window.extra_sources.rowCount())]==[('old','旧 Sheet'),('new','新 Sheet')]
+    assert window.extra_group.currentData()=='new'
+    assert window.extra_sources.cellWidget(0,4).currentData()=='image'
+
+def test_fold_state_persisted(window,monkeypatch):
+    import zb_studio.desktop as desktop
+    saved=[];monkeypatch.setattr(desktop,'save_settings',lambda cfg:saved.append(cfg))
+    window.add_extra_source('doc','表','别名',True,2)
+    window.extra_group.setCurrentIndex(window.extra_group.findData('doc'));window.toggle_extra_sources()
+    window.toggle_primary_sources();window.save()
+    assert saved[-1].collapsed_source_ids==['doc'] and saved[-1].primary_source_collapsed

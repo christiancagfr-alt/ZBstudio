@@ -209,30 +209,32 @@ def claim(api,cfg:Settings,ids:list[str],progress=None):
             raise ValueError('制作表不能同时作为任务来源，插入单元格会改变来源行号')
         metadata=get_metadata(api,cfg.production_spreadsheet_id,cfg.production_sheet) if cfg.production_layout=='left_al' else None
         planned=[];reserve={};locations={}
-        # Reserve numbers already used by this producer today across all configured sources.
+        # Sequence follows actual claim order; source deadlines never affect numbering.
         today=date.today().strftime('%Y%m%d')
-        used=[]
+        from .file_safety import source_download_folder
+        def scope(task):return task.source_id if cfg.sequence_mode=='per_source' else ''
+        used_by_scope={}
         for existing_task in all_tasks:
             match=re.match(r'^(\d+)-',existing_task.filename)
-            if existing_task.owner==cfg.producer and existing_task.filename.endswith('-'+today) and match:used.append(int(match[1]))
-        from .journal import list_operations
-        for event in list_operations(None):
-            if event['kind']!='claim' or event['state'] not in ('complete','source_written','production_written','source_partial_written','needs_review'):continue
-            if event['payload'].get('producer') not in (None,cfg.producer):continue
-            for item in event['payload'].get('tasks',[]):
-                for update in event['payload'].get('production_updates',[]):
-                    value=str(update.get('values',[['']])[0][0])
-                    match=re.match(r'^(\d+)-.*-'+today+'$',value)
-                    if item.get('owner') in ('',cfg.producer) and match:used.append(int(match[1]))
-        day_folder=Path(cfg.download_path)/today
-        if day_folder.is_dir():
-            for entry in day_folder.iterdir():
-                match=re.match(r'^(\d+)(?:\.|-|$)',entry.name)
-                if match:used.append(int(match[1]))
-        next_number=max(used,default=0)
-        # IDs arrive in the batch order shown to the user; never sort by sheet or deadline.
+            if existing_task.owner==cfg.producer and existing_task.filename.endswith('-'+today) and match:
+                used_by_scope.setdefault(scope(existing_task),set()).add(int(match[1]))
+        counters={};reserved={}
         for task in picked:
-            next_number+=1;num=str(next_number).zfill(2)
+            group=scope(task)
+            if group not in counters:
+                folder=source_download_folder(cfg.download_path,today,task.source_id,cfg.sequence_mode)
+                disk=set()
+                if folder.is_dir():
+                    for entry in folder.iterdir():
+                        match=re.match(r'^(\d+)(?:\.|-|$)',entry.name)
+                        if match:disk.add(int(match[1]))
+                reserved[group]=used_by_scope.get(group,set())|disk
+                if cfg.sequence_override is None:counters[group]=max(reserved[group]|{cfg.sequence_start-1})
+                else:counters[group]=cfg.sequence_override-1
+            counters[group]+=1
+            if counters[group] in reserved[group]:
+                raise ValueError(f'序号 {counters[group]:02d} 已被当前任务或本地素材占用；请先核对并处理后重试，软件不会覆盖。')
+            reserved[group].add(counters[group]);num=str(counters[group]).zfill(2)
             # duplicate-safe reserve production row across a single batch
             location_key='left' if cfg.production_layout=='left_al' else task.label
             if location_key not in locations:locations[location_key]=production_location(api,cfg,task)
@@ -249,16 +251,18 @@ def claim(api,cfg:Settings,ids:list[str],progress=None):
         if any(t.identity not in latest or not latest[t.identity].available or
                (latest[t.identity].chinese,latest[t.identity].deadline,latest[t.identity].person)!=(t.chinese,t.deadline,t.person)
                for t,_,_,_,_ in planned):raise ValueError('任务在领取前已被占用或移动，请刷新')
+        if len({name for _,_,name,_,_ in planned})!=len(planned):raise ValueError('本批任务自动命名重复，请调整任务内容或编号')
         source=[u for _,_,_,su,_ in planned for u in su]
         target=[u for _,_,_,_,tu in planned for u in tu]
         source_by_doc={}
         for t,_,_,su,_ in planned:source_by_doc.setdefault(t.source_id,[]).extend(su)
-        if metadata:
+        if metadata or cfg.sequence_override is not None or cfg.sequence_mode=='per_source':
             existing=read_grid(api,cfg.production_spreadsheet_id,cfg.production_sheet)
             production_header=header_index(existing,cfg.header_aliases)
             if production_header is None:raise ValueError('制作表表头已改变，请刷新后重试')
-            production_width=len(left_header(existing[production_header],cfg.header_aliases))
+            production_width=len(left_header(existing[production_header],cfg.header_aliases)) if metadata else len(existing[production_header])
             names={name for _,_,name,_,_ in planned}
+            if len(names)!=len(planned):raise ValueError('本批任务自动命名重复，请调整任务内容或编号')
             if any(str(value).strip() in names for row in existing for value in row[:production_width]):
                 raise ValueError('制作表已有本批自动命名，可能是上次回写中断；请先核对领取日志，禁止重复插入')
         # Warning: Sheets does not provide atomic operations across two spreadsheet IDs.

@@ -69,7 +69,7 @@ jobs:
 
   release:
     needs: desktop
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release v0.5.6]')
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release v0.5.7]')
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -87,7 +87,7 @@ jobs:
         run: |
           set -euo pipefail
           version=$(sed -n 's/^APP_VERSION = "\([^"]*\)"/\1/p' src/zb_studio/version.py | tr -d '\r')
-          test "$version" = '0.5.6'
+          test "$version" = '0.5.7'
           mkdir release-files
           for platform in Windows macOS Linux; do
             case "$platform" in
@@ -101,7 +101,7 @@ jobs:
           done
           (cd release-files && sha256sum ZBStudio-"$version"-* > "ZBStudio-$version-SHA256SUMS.txt")
           cat > release-notes.txt <<'NOTES'
-          多来源需求表、图片和视频任务分类、按领取顺序编号、来源制作人刷新，以及 macOS DMG 图标支持。
+          修复多来源工作表读取、删除和折叠；支持指定起始序号、各来源独立或连续编号，以及安全重置检查。检查更新入口移至侧栏。
 
           使用前请先用测试表格验证 Google 账号授权、多来源领取、素材下载和回填；多电脑并发领取尚无中心锁。跨工作簿写入非原子操作，失败时请查看操作记录并核对。
 

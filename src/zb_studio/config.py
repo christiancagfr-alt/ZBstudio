@@ -33,6 +33,11 @@ class Settings(BaseModel):
     production_sheet:str=''
     production_layout:Literal['grouped','left_al']='grouped'
     header_aliases:dict[str,list[str]]=Field(default_factory=dict)
+    sequence_start:int=Field(default=1,ge=1,le=999999)
+    sequence_mode:Literal['combined','per_source']='combined'
+    sequence_override:int|None=Field(default=None,ge=1,le=999999)
+    collapsed_source_ids:list[str]=Field(default_factory=list)
+    primary_source_collapsed:bool=False
     download_path:str=str(Path.home()/'ZB Studio')
     drive_parent_folder_id:str=''
     register_spreadsheet_id:str=''

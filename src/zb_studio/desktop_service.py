@@ -54,7 +54,8 @@ def download_claim_image(cfg,item,progress=None):
     from .file_safety import checked_child
     from .drive_download import folder_id,download_folder,download_file,extension,FIELDS,FOLDER
     from .image_fetch import drive_id
-    folder=checked_child(cfg.download_path,safe_component(item['date']));folder.mkdir(parents=True,exist_ok=True)
+    from .file_safety import source_download_folder
+    folder=source_download_folder(cfg.download_path,item['date'],item.get('source_id',''),cfg.sequence_mode);folder.mkdir(parents=True,exist_ok=True)
     fid=folder_id(item['image'])
     if fid:
         _,drive=services();result=download_folder(drive,fid,folder,item['number'],progress,flat=True)
