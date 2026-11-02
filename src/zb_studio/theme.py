@@ -29,10 +29,17 @@ QTableWidget{background:white;alternate-background-color:#fbfcff;border:1px soli
 QTableWidget::item{padding:9px;border-bottom:1px solid #eef2f7;}
 QTableWidget::item:selected{background:#eaf3ff;color:#24558b;}
 QHeaderView::section{background:#f1f5fb;color:#65758e;font-size:12px;font-weight:600;padding:12px;border:0;border-bottom:1px solid #e5ecf4;}
+QTableWidget#headerMapping::item{padding:4px 10px;}
+QTableWidget#headerMapping QLineEdit{padding:2px 8px;min-height:0;border-radius:4px;}
 QTableWidget#compactStats::item{padding:3px;}
 QTableWidget#compactStats QHeaderView::section{padding:7px 3px;}
 QWidget#topbar QPushButton{padding:8px 12px;}
-QTableWidget::indicator{width:17px;height:17px;}
+QCheckBox::indicator,QTableWidget::indicator{width:17px;height:17px;border:1px solid #7489a3;border-radius:3px;background:#ffffff;}
+QCheckBox::indicator:checked,QTableWidget::indicator:checked{background:#0879ff;border:2px solid #0069d9;}
+QCheckBox::indicator:disabled,QTableWidget::indicator:disabled{background:#e3e9f1;border-color:#b3becc;}
+QMessageBox{background:#ffffff;} QMessageBox QLabel{color:#24344c;}
+QComboBox QAbstractItemView{background:#ffffff;color:#24344c;selection-background-color:#d9eaff;selection-color:#153e70;}
+
 QWidget#settingsContent{background:#f5f7fb;}
 QScrollArea{background:transparent;border:0;}
 QScrollBar:vertical{background:transparent;width:9px;margin:3px;}
@@ -85,5 +92,9 @@ QComboBox{padding:6px 28px 6px 10px;min-height:24px;}
 QComboBox::drop-down{width:22px;subcontrol-origin:padding;subcontrol-position:top right;border:0;}
 QProgressBar{background:#263448;color:#eef4ff;border:1px solid #455871;border-radius:5px;text-align:center;}
 QProgressBar::chunk{background:#1684ff;border-radius:4px;}
+QCheckBox::indicator,QTableWidget::indicator{background:#1a2535;border:1px solid #a4bbd4;}
+QCheckBox::indicator:checked,QTableWidget::indicator:checked{background:#1684ff;border:2px solid #9cd0ff;}
+QCheckBox::indicator:disabled,QTableWidget::indicator:disabled{background:#334155;border-color:#62748a;}
+QMessageBox{background:#1c2636;} QMessageBox QLabel{color:#edf3ff;}
 QToolTip{background:#253449;color:#f0f5ff;border:1px solid #637a96;}
 '''

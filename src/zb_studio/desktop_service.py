@@ -6,21 +6,26 @@ from .workflow import load_tasks, claim, write_completed
 from .domain import match_filename
 from .drive_upload import upload_video
 from .journal import record
+from .config import source_documents
 
 def query(cfg,progress=None):
     if progress:progress('正在连接 Google 并检查授权…')
     sheets,_=services()
-    if progress:progress(f'正在读取 {len(cfg.source_sheets)} 个需求工作表…')
+    if progress:progress(f'正在读取 {sum(s.enabled for d in source_documents(cfg) for s in d.sheets)} 个需求工作表…')
     tasks=load_tasks(sheets,cfg,progress,include_metrics=True)
     if progress:progress(f'读取完成：{len(tasks)} 个任务')
     return tasks
 
-def claim_tasks(cfg,ids,progress):
+def claim_tasks(cfg,ids,progress,download_images=False):
     progress('正在连接 Google 并检查授权…')
     sheets,_=services()
     result=claim(sheets,cfg,ids,progress)
-    failures=[]
+    failures=[];skipped=[]
+    source_types={(doc.spreadsheet_id,s.name):s.task_type for doc in source_documents(cfg) for s in doc.sheets}
     for i,item in enumerate(result):
+        if source_types.get((item.get('source_id'),item.get('sheet')),'video')=='image' and not download_images:
+            skipped.append(item);progress(f'图片需求跳过素材下载：{item["folder"]} / {item["number"]}')
+            continue
         progress(f'领取成功 · 下载素材 {i+1}/{len(result)}：{item["folder"]} / {item["number"]}')
         try:
             path=download_claim_image(cfg,item,progress)
@@ -28,7 +33,12 @@ def claim_tasks(cfg,ids,progress):
         except Exception as e:
             failures.append({'item':item,'error':str(e)});progress('下载失败：'+str(e))
             record('download','failed',{'item':item,'error':str(e)})
-    return {'claimed':result,'failed_downloads':failures}
+    fresh=None
+    try:
+        progress('正在重新读取来源表，核对制作人…')
+        fresh=load_tasks(sheets,cfg,progress,include_metrics=True)
+    except Exception as e:progress('领取已完成，但刷新来源失败，请手动刷新：'+str(e))
+    return {'claimed':result,'failed_downloads':failures,'skipped_downloads':skipped,'fresh_tasks':fresh}
 
 def download_claim_image(cfg,item,progress=None):
     progress=progress or (lambda message:None)
@@ -44,17 +54,17 @@ def download_claim_image(cfg,item,progress=None):
     from .file_safety import checked_child
     from .drive_download import folder_id,download_folder,download_file,extension,FIELDS,FOLDER
     from .image_fetch import drive_id
-    folder=checked_child(cfg.download_path,safe_component(item['date']),safe_component(demand or '需求日期未填写'),safe_component(item['folder']));folder.mkdir(parents=True,exist_ok=True)
+    folder=checked_child(cfg.download_path,safe_component(item['date']));folder.mkdir(parents=True,exist_ok=True)
     fid=folder_id(item['image'])
     if fid:
-        _,drive=services();result=download_folder(drive,fid,folder,item['number'],progress)
+        _,drive=services();result=download_folder(drive,fid,folder,item['number'],progress,flat=True)
         record('download','complete',{'item':item,'path':result});return result
     try:data=fetch_image(item['image'],original=True)
     except Exception:
         fid=drive_id(item['image'])
         if not fid:raise
         _,drive=services();metadata=drive.files().get(fileId=fid,fields=FIELDS,supportsAllDrives=True).execute()
-        if metadata['mimeType']==FOLDER:result=download_folder(drive,fid,folder,item['number'],progress)
+        if metadata['mimeType']==FOLDER:result=download_folder(drive,fid,folder,item['number'],progress,flat=True)
         else:result=str(download_file(drive,metadata,checked_child(folder,safe_component(item['number'])+extension(metadata)),progress,[0]))
         record('download','complete',{'item':item,'path':result});return result
     buf=QBuffer();buf.setData(QByteArray(data));buf.open(QIODevice.OpenModeFlag.ReadOnly)

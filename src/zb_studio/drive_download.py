@@ -117,20 +117,20 @@ def download_file(drive,item,target,progress,budget):
         Path(temporary).unlink(missing_ok=True)
 
 
-def download_folder(drive,fid,base,number,progress):
+def download_folder(drive,fid,base,number,progress,flat=False):
     root=drive.files().get(fileId=valid_drive_id(fid),fields=FIELDS,supportsAllDrives=True).execute()
     if root.get('mimeType')!=FOLDER:raise ValueError('链接不是可访问的 Google Drive 文件夹')
-    folder=checked_child(base,safe_component(number));entries=list_tree(drive,fid,progress)
+    folder=Path(base) if flat else checked_child(base,safe_component(number));entries=list_tree(drive,fid,progress)
     folder.mkdir(parents=True,exist_ok=True);counters=defaultdict(int);budget=[0];failures=[]
     total=sum(item is not None for _,item in entries);index=0
     for relative,item in entries:
         if budget[0]>MAX_BYTES:raise ValueError('达到单次20GB下载限制，已成功文件保留')
-        destination=checked_child(folder,*relative);destination.mkdir(parents=True,exist_ok=True)
+        destination=folder if flat else checked_child(folder,*relative);destination.mkdir(parents=True,exist_ok=True)
         if item is None:continue
         kind='image' if item['mimeType'].startswith('image/') else 'video' if item['mimeType'].startswith('video/') else 'other'
         counters[kind]+=1;index+=1
-        if kind=='other':destination=checked_child(destination,'附件')
-        target=checked_child(destination,f'{safe_component(number)}-{counters[kind]}{extension(item)}')
+        if kind=='other' and not flat:destination=checked_child(destination,'附件')
+        target=checked_child(destination,f'{safe_component(number)}-{counters[kind]}' + ('-视频' if flat and kind=='video' else '-附件' if flat and kind=='other' else '') + extension(item))
         progress(f'文件夹下载 {index}/{total}：{item["name"]} → {target.name}')
         try:result=download_file(drive,item,target,progress,budget);progress('下载成功：'+str(result))
         except Exception as e:failures.append(item['name']);progress('下载失败：'+item['name']+' · '+str(e))

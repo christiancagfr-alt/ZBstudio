@@ -8,6 +8,17 @@ class SourceSheet(BaseModel):
     name:str
     alias:str
     enabled:bool=False
+    task_type:Literal['video','image']='video'
+class SourceDocument(BaseModel):
+    spreadsheet_id:str
+    sheets:list[SourceSheet]=Field(default_factory=list)
+
+def source_documents(cfg):
+    if cfg.source_documents:return cfg.source_documents
+    if not cfg.source_spreadsheet_id:return []
+    rows=cfg.source_catalog or [SourceSheet(name=n,alias=cfg.requester_names.get(n,n),enabled=True) for n in cfg.source_sheets]
+    return [SourceDocument(spreadsheet_id=cfg.source_spreadsheet_id,sheets=rows)]
+
 def default_register_columns():
     return {'date':'A','link':'B','group':'C','type':'D','difficulty':'E','material':'F','software':'G','producer':'H','duration':'AC','duration_class':'AB'}
 class Settings(BaseModel):
@@ -17,9 +28,11 @@ class Settings(BaseModel):
     prefix:str='ZB'
     source_spreadsheet_id:str=''
     source_sheets:list[str]=Field(default_factory=list)
+    source_documents:list[SourceDocument]=Field(default_factory=list)
     production_spreadsheet_id:str=''
     production_sheet:str=''
     production_layout:Literal['grouped','left_al']='grouped'
+    header_aliases:dict[str,list[str]]=Field(default_factory=dict)
     download_path:str=str(Path.home()/'ZB Studio')
     drive_parent_folder_id:str=''
     register_spreadsheet_id:str=''

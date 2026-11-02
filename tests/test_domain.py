@@ -40,3 +40,20 @@ def test_variable_header_rows_preserve_source_positions(row_index):
 
 def test_invalid_header_reports_problem_instead_of_zero():
     with pytest.raises(ValueError,match='任务表头'):parse_sheet('doc','需求',[['说明'],[],['不支持的字段']])
+
+
+def test_empty_middle_group_and_custom_headers_preserve_actual_owner():
+    header=['任务日期','内容文案','负责人员']
+    grid=[['甲','','','乙','','','丙'],[],header*3,
+          ['2026-10-28','第一条','别人','','','','2026-10-28','第三条','小王']]
+    aliases={'deadline':['任务日期'],'chinese':['内容文案'],'owner':['负责人员']}
+    tasks=parse_sheet('doc','sheet',grid,'需求者',aliases)
+    assert [(t.person,t.owner,t.start_col) for t in tasks]==[('甲','别人',0),('丙','小王',6)]
+    assert not any(t.available for t in tasks)
+
+
+@pytest.mark.parametrize('language',["英语","西班牙语","法语","希腊语"])
+def test_language_header_is_read_and_preserved(language):
+    tasks=parse_sheet('id','工作表',[['人物'],[],['截至日期','中文',language,'制作人'],['2026-11-02','中文','translated','其他人']])
+    assert tasks[0].portuguese=='translated' and tasks[0].language_header==language
+    assert tasks[0].owner=='其他人'

@@ -94,7 +94,7 @@ def test_image_collisions_and_retries_preserve_existing(tmp_path,monkeypatch):
     assert a!=b and Path(a).read_bytes()==first and Path(b).read_bytes()==second
     assert service.download_claim_image(cfg,item)==b
 
-def test_download_separates_demand_dates(tmp_path,monkeypatch):
+def test_download_uses_claim_day_folder(tmp_path,monkeypatch):
     from zb_studio import desktop_service as service,image_fetch
     from PySide6.QtGui import QImage
     from PySide6.QtCore import QBuffer,QIODevice
@@ -107,5 +107,20 @@ def test_download_separates_demand_dates(tmp_path,monkeypatch):
     base={'id':'a','image':'url','number':'01','date':'20261028','folder':'林夕 长文案需求'}
     a=Path(service.download_claim_image(cfg,dict(base,deadline='10-27')))
     b=Path(service.download_claim_image(cfg,dict(base,deadline='2026-10-28')))
-    assert a.relative_to(tmp_path).parts==('20261028','20261027','林夕 长文案需求','01.png')
-    assert b.relative_to(tmp_path).parts==('20261028','20261028','林夕 长文案需求','01.png')
+    assert a.relative_to(tmp_path).parts==('20261028','01.png')
+    assert b==a
+
+
+@pytest.mark.parametrize('download_images,expected',[(False,['video']),(True,['video','image'])])
+def test_mixed_source_download_policy(monkeypatch,download_images,expected):
+    from zb_studio import desktop_service as service
+    from zb_studio.config import SourceDocument,SourceSheet
+    cfg=Settings(source_documents=[SourceDocument(spreadsheet_id='doc',sheets=[SourceSheet(name='视频表',alias='甲',enabled=True,task_type='video'),SourceSheet(name='图片表',alias='乙',enabled=True,task_type='image')])])
+    items=[{'id':'v','source_id':'doc','sheet':'视频表','folder':'甲','number':'01'}, {'id':'i','source_id':'doc','sheet':'图片表','folder':'乙','number':'02'}]
+    monkeypatch.setattr(service,'services',lambda:(None,None));monkeypatch.setattr(service,'claim',lambda *a:items)
+    monkeypatch.setattr(service,'load_tasks',lambda *a,**k:[])
+    downloads=[];monkeypatch.setattr(service,'download_claim_image',lambda cfg,item,progress:(downloads.append('video' if item['id']=='v' else 'image') or 'saved'))
+    result=service.claim_tasks(cfg,['v','i'],lambda _:None,download_images)
+    assert downloads==expected
+    assert len(result['skipped_downloads'])==(0 if download_images else 1)
+    assert not result['failed_downloads']

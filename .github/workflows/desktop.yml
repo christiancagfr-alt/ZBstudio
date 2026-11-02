@@ -45,10 +45,66 @@ jobs:
           else
             dist/ZBStudio/ZBStudio --smoke-test
           fi
+      - name: Verify macOS application icon
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          icon_name=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' dist/ZBStudio.app/Contents/Info.plist)
+          test -n "$icon_name"
+          test -s "dist/ZBStudio.app/Contents/Resources/$icon_name"
       - name: Build native installer
         run: python build_installers.py
+      - name: Verify macOS disk image
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          image=(installers/ZBStudio-*-macOS.dmg)
+          test "${#image[@]}" -eq 1
+          hdiutil verify "${image[0]}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ZBStudio-${{ runner.os }}-${{ runner.arch }}
           path: installers/
           retention-days: 14
+
+  release:
+    needs: desktop
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && contains(github.event.head_commit.message, '[release v0.5.6]')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          path: artifacts
+      - name: Verify and publish installers
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^APP_VERSION = "\([^"]*\)"/\1/p' src/zb_studio/version.py)
+          test "$version" = '0.5.6'
+          mkdir release-files
+          for platform in Windows macOS Linux; do
+            case "$platform" in
+              Windows) dir=artifacts/ZBStudio-Windows-X64; file="ZBStudio-$version-Windows-Setup.exe" ;;
+              macOS) dir=artifacts/ZBStudio-macOS-ARM64; file="ZBStudio-$version-macOS.dmg" ;;
+              Linux) dir=artifacts/ZBStudio-Linux-X64; file="ZBStudio-$version-Linux.tar.gz" ;;
+            esac
+            test -s "$dir/$file"
+            (cd "$dir" && sha256sum --check "ZBStudio-$version-SHA256SUMS.txt")
+            cp "$dir/$file" release-files/
+          done
+          (cd release-files && sha256sum ZBStudio-"$version"-* > "ZBStudio-$version-SHA256SUMS.txt")
+          cat > release-notes.txt <<'NOTES'
+          多来源需求表、图片和视频任务分类、按领取顺序编号、来源制作人刷新，以及 macOS DMG 图标支持。
+
+          使用前请先用测试表格验证 Google 账号授权、多来源领取、素材下载和回填；多电脑并发领取尚无中心锁。跨工作簿写入非原子操作，失败时请查看操作记录并核对。
+
+          安装包未签名；macOS 包未经过 Apple 公证。个人设置和授权资料不包含在安装包中。
+          NOTES
+          gh release create "v$version" --target "$GITHUB_SHA" --title "ZB Studio v$version" --notes-file release-notes.txt release-files/*

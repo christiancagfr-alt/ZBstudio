@@ -6,7 +6,7 @@ import re
 import colorsys
 from urllib.parse import urlsplit
 from .domain import parse_sheet,allocate_numbers,make_filename,date_key,match_filename,OUTPUTS,key_for,header_index
-from .config import Settings
+from .config import Settings,source_documents
 from .journal import record
 
 LOCK=threading.RLock()
@@ -77,20 +77,22 @@ def read_output_colors(api,doc,sheet_id,tasks):
         task.views_url=post_link(task.views_note,playback.get('hyperlink',''))
 
 def load_tasks(api,cfg:Settings,progress=None,include_metrics=False):
-    if not cfg.source_sheets:raise ValueError('尚未启用工作表：请在设置中勾选工作表并点击“保存设置”，再刷新任务')
-    tasks=[]
-    metadata={s['title']:s for s in list_sheet_metadata(api,cfg.source_spreadsheet_id)} if progress else {}
-    for i,name in enumerate(cfg.source_sheets):
+    sources=[(doc.spreadsheet_id,row) for doc in source_documents(cfg) for row in doc.sheets if row.enabled]
+    if not sources:raise ValueError('尚未启用工作表：请在设置中勾选工作表并保存')
+    tasks=[];metadata_cache={}
+    for i,(doc,row) in enumerate(sources):
+        name=row.name
         if progress:
-            progress(f'正在读取工作表 {i+1}/{len(cfg.source_sheets)}：{name}')
-            if name not in metadata:raise ValueError(f'工作表已改名或不存在：{name}，请在设置中重新读取工作表列表')
-            grid=read_grid(api,cfg.source_spreadsheet_id,name,metadata[name])
-        else:grid=read_grid(api,cfg.source_spreadsheet_id,name)
-        parsed=parse_sheet(cfg.source_spreadsheet_id,name,grid,cfg.requester_names.get(name,name))
+            progress(f'正在读取工作表 {i+1}/{len(sources)}：{name}')
+            if doc not in metadata_cache:metadata_cache[doc]={s['title']:s for s in list_sheet_metadata(api,doc)}
+            if name not in metadata_cache[doc]:raise ValueError(f'工作表已改名或不存在：{name}，请在设置中重新读取工作表列表')
+            grid=read_grid(api,doc,name,metadata_cache[doc][name])
+        else:grid=read_grid(api,doc,name)
+        parsed=parse_sheet(doc,name,grid,row.alias,cfg.header_aliases)
         if include_metrics and any('views' in t.columns or (t.output and 'output' in t.columns) for t in parsed):
-            meta=metadata[name] if progress else get_metadata(api,cfg.source_spreadsheet_id,name)
+            meta=metadata_cache[doc][name] if progress else get_metadata(api,doc,name)
             if progress:progress(f'正在同步成品颜色、播放量和贴文链接：{name}')
-            read_output_colors(api,cfg.source_spreadsheet_id,meta['sheetId'],parsed)
+            read_output_colors(api,doc,meta['sheetId'],parsed)
         tasks.extend(parsed)
     if cfg.start_date or cfg.end_date:
         low=date_key(cfg.start_date) if cfg.start_date else ''
@@ -118,51 +120,50 @@ def prepare_header_extensions(api,cfg,tasks):
     """Fill missing columns in each person's horizontal group, only if there is a blank gap."""
     updates=[]
     by_group={}
-    for t in tasks:by_group[(t.sheet,t.start_col)]=t
-    for (sheet,start),t in by_group.items():
+    for t in tasks:by_group[(t.source_id,t.sheet,t.start_col)]=t
+    for (doc,sheet,start),t in by_group.items():
         # template normally has all four output fields. Never overwrite neighbor groups.
         missing=[k for k in OUTPUTS if k not in t.columns]
         if missing:raise ValueError(f'{sheet} 人物 {t.person} 缺少列 {missing}；请先在该横向组配置对应表头，避免覆盖相邻人物')
     return updates
 
-def left_header(header):
+def left_header(header, aliases=None):
     """First field group ends at its output column or the next deadline group."""
-    starts=[c for c,h in enumerate(header) if key_for(h)=='deadline']
+    starts=[c for c,h in enumerate(header) if key_for(h,aliases)=='deadline']
     if not starts or starts[0]!=0:raise ValueError('制作表左侧首列必须为日期表头')
     end=starts[1] if len(starts)>1 else len(header)
-    outputs=[c for c in range(end) if key_for(header[c])=='output']
+    outputs=[c for c in range(end) if key_for(header[c],aliases)=='output']
     if outputs:
         end=outputs[0]+1
-        if end<len(header) and key_for(header[end])=='views':end+=1
+        if end<len(header) and key_for(header[end],aliases)=='views':end+=1
     return header[:end]
 
 
 def production_location(api,cfg,task):
     """Find matching group in producer's horizontal template; append to first wholly empty row."""
     grid=read_grid(api,cfg.production_spreadsheet_id,cfg.production_sheet)
-    header_row=header_index(grid)
-    if header_row is None:raise ValueError('制作表未找到包含“截至日期”和“中文”的字段标题行')
+    header_row=header_index(grid,cfg.header_aliases)
+    if header_row is None:raise ValueError(f'制作表工作表「{cfg.production_sheet}」前30行未找到日期和中文文案表头。请检查制作表 ID、工作表名称；如表头改名，请在系统设置的“表头别名”中配置。此错误与需求表空分组无直接关系。')
     header=grid[header_row]
     if cfg.production_layout=='left_al':
         cols={}
-        for c,h in enumerate(left_header(header)):
-            key=key_for(h)
+        for c,h in enumerate(left_header(header,cfg.header_aliases)):
+            key=key_for(h,cfg.header_aliases)
             if key:
                 if key in cols:raise ValueError('制作表左侧字段组存在重复字段，请核对表头')
                 cols[key]=c
         missing=[k for k in ('deadline','chinese','owner','filename','number','output') if k not in cols]
         if missing:raise ValueError(f'制作表左侧字段组缺少必要字段：{missing}')
         return header_row+2,cols
-    groups=parse_sheet(cfg.production_spreadsheet_id,cfg.production_sheet,grid,'')
     # Parse group definitions even when task rows are empty.
-    starts=[c for c,h in enumerate(header) if key_for(h)=='deadline']
+    starts=[c for c,h in enumerate(header) if key_for(h,cfg.header_aliases)=='deadline']
     matches=[]
     for i,start in enumerate(starts):
         group_label= str(grid[0][start]).strip() if start<len(grid[0]) else ''
         # requester+person or category-only depending on template
         if group_label==task.person or group_label==task.label:
             end=starts[i+1] if i+1<len(starts) else len(header)
-            cmap={key_for(header[c]):c for c in range(start,end) if key_for(header[c])}
+            cmap={key_for(header[c],cfg.header_aliases):c for c in range(start,end) if key_for(header[c],cfg.header_aliases)}
             if all(k in cmap for k in ('deadline','chinese','owner','filename','number')):matches.append((start,cmap))
     if len(matches)!=1:
         raise ValueError(f'当前制作表写入方式为“按人物分组追加”，未找到唯一匹配的人物组：{task.label}。\n'
@@ -176,7 +177,7 @@ def production_location(api,cfg,task):
 
 def updates_for_task(cfg,task,number,name,production_row,production_cols):
     source_fields={'owner':cfg.producer,'filename':name,'number':number,'progress':'制作中'}
-    production_fields={'requester':task.requester,'deadline':task.deadline,'chinese':task.chinese,'portuguese':task.portuguese,
+    production_fields={'requester':task.requester,'person':task.person,'deadline':task.deadline,'chinese':task.chinese,'portuguese':task.portuguese,
        'image':task.image,'reference':task.reference,'requirements':task.requirements,'urgency':task.urgency,'views':task.views,'owner':cfg.producer,'filename':name,'number':number,'progress':'制作中'}
     updates_source=[];updates_prod=[]
     for k,v in source_fields.items():
@@ -197,17 +198,41 @@ def claim(api,cfg:Settings,ids:list[str],progress=None):
     with LOCK:
         notify=progress or (lambda message:None)
         notify('正在读取来源表并检查任务占用…')
-        all_tasks=load_tasks(api,cfg,progress) if progress else load_tasks(api,cfg)
+        unfiltered=cfg.model_copy(update={"start_date":"","end_date":""})
+        all_tasks=load_tasks(api,unfiltered,progress) if progress else load_tasks(api,unfiltered)
         lookup={t.identity:t for t in all_tasks}
         if not ids or len(ids)!=len(set(ids)):raise ValueError('请选择互不重复的任务')
         picked=[lookup.get(i) for i in ids]
         if any(t is None or not t.available for t in picked):raise ValueError('任务不存在或已被他人领取，请刷新')
         prepare_header_extensions(api,cfg,picked)
-        if cfg.production_layout=='left_al' and cfg.production_spreadsheet_id==cfg.source_spreadsheet_id and cfg.production_sheet in cfg.source_sheets:
+        if cfg.production_layout=='left_al' and any(cfg.production_spreadsheet_id==d.spreadsheet_id and any(x.enabled and x.name==cfg.production_sheet for x in d.sheets) for d in source_documents(cfg)):
             raise ValueError('制作表不能同时作为任务来源，插入单元格会改变来源行号')
         metadata=get_metadata(api,cfg.production_spreadsheet_id,cfg.production_sheet) if cfg.production_layout=='left_al' else None
         planned=[];reserve={};locations={}
-        for task,num in allocate_numbers(all_tasks,ids):
+        # Reserve numbers already used by this producer today across all configured sources.
+        today=date.today().strftime('%Y%m%d')
+        used=[]
+        for existing_task in all_tasks:
+            match=re.match(r'^(\d+)-',existing_task.filename)
+            if existing_task.owner==cfg.producer and existing_task.filename.endswith('-'+today) and match:used.append(int(match[1]))
+        from .journal import list_operations
+        for event in list_operations(None):
+            if event['kind']!='claim' or event['state'] not in ('complete','source_written','production_written','source_partial_written','needs_review'):continue
+            if event['payload'].get('producer') not in (None,cfg.producer):continue
+            for item in event['payload'].get('tasks',[]):
+                for update in event['payload'].get('production_updates',[]):
+                    value=str(update.get('values',[['']])[0][0])
+                    match=re.match(r'^(\d+)-.*-'+today+'$',value)
+                    if item.get('owner') in ('',cfg.producer) and match:used.append(int(match[1]))
+        day_folder=Path(cfg.download_path)/today
+        if day_folder.is_dir():
+            for entry in day_folder.iterdir():
+                match=re.match(r'^(\d+)(?:\.|-|$)',entry.name)
+                if match:used.append(int(match[1]))
+        next_number=max(used,default=0)
+        # IDs arrive in the batch order shown to the user; never sort by sheet or deadline.
+        for task in picked:
+            next_number+=1;num=str(next_number).zfill(2)
             # duplicate-safe reserve production row across a single batch
             location_key='left' if cfg.production_layout=='left_al' else task.label
             if location_key not in locations:locations[location_key]=production_location(api,cfg,task)
@@ -220,23 +245,25 @@ def claim(api,cfg:Settings,ids:list[str],progress=None):
             planned.append((task,num,name,src,dst))
         # Verify once more immediately before writing.
         notify('正在再次检查来源任务是否被占用…')
-        latest={t.identity:t for t in (load_tasks(api,cfg,progress) if progress else load_tasks(api,cfg))}
+        latest={t.identity:t for t in (load_tasks(api,unfiltered,progress) if progress else load_tasks(api,unfiltered))}
         if any(t.identity not in latest or not latest[t.identity].available or
                (latest[t.identity].chinese,latest[t.identity].deadline,latest[t.identity].person)!=(t.chinese,t.deadline,t.person)
                for t,_,_,_,_ in planned):raise ValueError('任务在领取前已被占用或移动，请刷新')
         source=[u for _,_,_,su,_ in planned for u in su]
         target=[u for _,_,_,_,tu in planned for u in tu]
+        source_by_doc={}
+        for t,_,_,su,_ in planned:source_by_doc.setdefault(t.source_id,[]).extend(su)
         if metadata:
             existing=read_grid(api,cfg.production_spreadsheet_id,cfg.production_sheet)
-            production_header=header_index(existing)
+            production_header=header_index(existing,cfg.header_aliases)
             if production_header is None:raise ValueError('制作表表头已改变，请刷新后重试')
-            production_width=len(left_header(existing[production_header]))
+            production_width=len(left_header(existing[production_header],cfg.header_aliases))
             names={name for _,_,name,_,_ in planned}
             if any(str(value).strip() in names for row in existing for value in row[:production_width]):
                 raise ValueError('制作表已有本批自动命名，可能是上次回写中断；请先核对领取日志，禁止重复插入')
         # Warning: Sheets does not provide atomic operations across two spreadsheet IDs.
         payload={'source_id':cfg.source_spreadsheet_id,'production_id':cfg.production_spreadsheet_id,
-                 'tasks':[t.__dict__ for t,_,_,_,_ in planned],'source_updates':source,'production_updates':target}
+                 'producer':cfg.producer,'tasks':[t.__dict__ for t,_,_,_,_ in planned],'source_updates':source,'source_updates_by_document':source_by_doc,'production_updates':target}
         production_requests=[]
         if metadata:
             first_row=min(int(re.search(r'(\d+)$',u['range'])[1]) for u in target)
@@ -265,10 +292,12 @@ def claim(api,cfg:Settings,ids:list[str],progress=None):
                 api.spreadsheets().batchUpdate(spreadsheetId=cfg.production_spreadsheet_id,
                     body={'requests':production_requests}).execute()
                 record('claim','production_written',payload,operation)
-            batch_write(api,cfg.source_spreadsheet_id,source)
+            for doc,updates in source_by_doc.items():
+                batch_write(api,doc,updates)
+                record('claim','source_partial_written',payload,operation)
             notify('正在核验需求表回填…')
             if progress is not None:
-                verify_updates(api,cfg.source_spreadsheet_id,source)
+                for doc,updates in source_by_doc.items():verify_updates(api,doc,updates)
             for update in source:notify('已回填 '+update['range'])
             record('claim','source_written',payload,operation)
             if not production_requests:batch_write(api,cfg.production_spreadsheet_id,target)
@@ -277,7 +306,7 @@ def claim(api,cfg:Settings,ids:list[str],progress=None):
             payload['error']=str(e)
             record('claim','needs_review',payload,operation)
             raise ValueError(f'领取未完整完成，已保存核对日志 {operation}；请核对双表，不要重复领取') from e
-        return [{'id':t.identity,'deadline':t.deadline,'number':n,'filename':f,'image':t.image,'folder':t.label,'date':date.today().strftime('%Y%m%d')} for t,n,f,_,_ in planned]
+        return [{'id':t.identity,'source_id':t.source_id,'sheet':t.sheet,'deadline':t.deadline,'number':n,'filename':f,'image':t.image,'folder':t.label,'date':date.today().strftime('%Y%m%d')} for t,n,f,_,_ in planned]
 
 def verify_updates(api,doc,updates):
     response=api.spreadsheets().values().batchGet(spreadsheetId=doc,ranges=[u['range'] for u in updates],valueRenderOption='FORMATTED_VALUE').execute()
@@ -296,13 +325,13 @@ def release_task(api,cfg,identity,expected_name,progress):
         if t.owner!=cfg.producer or t.output:raise ValueError('只能放弃自己未完成的任务')
         if not t.filename:raise ValueError('任务缺少自动命名，无法安全定位制作记录')
         grid=read_grid(api,cfg.production_spreadsheet_id,cfg.production_sheet)
-        h=header_index(grid)
+        h=header_index(grid,cfg.header_aliases)
         if h is None:raise ValueError('制作表缺少表头')
-        header=left_header(grid[h]) if cfg.production_layout=='left_al' else grid[h]
-        starts=[c for c,v in enumerate(header) if key_for(v)=='deadline'];matches=[]
+        header=left_header(grid[h],cfg.header_aliases) if cfg.production_layout=='left_al' else grid[h]
+        starts=[c for c,v in enumerate(header) if key_for(v,cfg.header_aliases)=='deadline'];matches=[]
         for i,start in enumerate(starts):
             end=starts[i+1] if i+1<len(starts) else len(header)
-            cols={key_for(header[c]):c for c in range(start,end) if key_for(header[c])}
+            cols={key_for(header[c],cfg.header_aliases):c for c in range(start,end) if key_for(header[c],cfg.header_aliases)}
             if not all(k in cols for k in ('filename','owner','progress','output')):continue
             for r in range(h+1,len(grid)):
                 val=lambda k:str(grid[r][cols[k]]).strip() if cols[k]<len(grid[r]) else ''
@@ -321,7 +350,7 @@ def release_task(api,cfg,identity,expected_name,progress):
         try:
             progress('正在将制作记录标记为已放弃…');batch_write(api,cfg.production_spreadsheet_id,target)
             record('release','production_written',payload,op)
-            progress('正在释放来源任务…');batch_write(api,cfg.source_spreadsheet_id,source)
+            progress('正在释放来源任务…');batch_write(api,t.source_id,source)
             fresh={x.identity:x for x in load_tasks(api,cfg)}.get(identity)
             if not fresh or fresh.owner or fresh.filename:raise ValueError('来源释放核验失败')
             record('release','complete',payload,op)
@@ -342,14 +371,14 @@ def write_completed(api,cfg,task,url):
     # Locate production by exact filename, not by stale row.
     grid=read_grid(api,cfg.production_spreadsheet_id,cfg.production_sheet)
     names=[]
-    header_row=header_index(grid)
+    header_row=header_index(grid,cfg.header_aliases)
     if header_row is None:raise ValueError('制作表未找到任务表头，未执行回填')
     header=grid[header_row]
-    if cfg.production_layout=='left_al':header=left_header(header)
-    starts=[c for c,h in enumerate(header) if key_for(h)=='deadline']
+    if cfg.production_layout=='left_al':header=left_header(header,cfg.header_aliases)
+    starts=[c for c,h in enumerate(header) if key_for(h,cfg.header_aliases)=='deadline']
     for i,start in enumerate(starts):
         end=starts[i+1] if i+1<len(starts) else len(header)
-        cols={key_for(header[c]):c for c in range(start,end) if key_for(header[c])}
+        cols={key_for(header[c],cfg.header_aliases):c for c in range(start,end) if key_for(header[c],cfg.header_aliases)}
         if 'filename' not in cols or 'output' not in cols:continue
         for r in range(header_row+1,len(grid)):
             if cols['filename']<len(grid[r]) and str(grid[r][cols['filename']]).strip()==task.filename:
@@ -359,4 +388,4 @@ def write_completed(api,cfg,task,url):
     dest=[{'range':f'{quoted(cfg.production_sheet)}!{a1col(cols["output"])}{row}','values':[[url]]}]
     if 'progress' in cols:dest.append({'range':f'{quoted(cfg.production_sheet)}!{a1col(cols["progress"])}{row}','values':[['已完成']]})
     batch_write(api,cfg.production_spreadsheet_id,dest)
-    batch_write(api,cfg.source_spreadsheet_id,source)
+    batch_write(api,task.source_id,source)

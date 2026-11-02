@@ -18,5 +18,5 @@ def merge_sources(tabs,previous):
         old=by_id.get(tab['sheetId'],by_name.get(tab['title'],{}))
         result.append({'sheet_id':tab['sheetId'],'name':tab['title'],
                        'alias':old.get('alias') or suggest_alias(tab['title']),
-                       'enabled':old.get('enabled',False)})
+                       'enabled':old.get('enabled',False),'task_type':old.get('task_type','video')})
     return result

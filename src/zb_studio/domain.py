@@ -7,6 +7,7 @@ import unicodedata
 
 ALIASES = {
     "requester": ["管理员", "需求者"],
+    "person": ["人物定位", "人物分类"],
     "deadline": ["截至日期", "截止日期", "日期", "时间"],
     "chinese": ["中文", "中文文案", "文案"],
     "portuguese": ["葡语", "葡萄牙语"],
@@ -24,10 +25,17 @@ ALIASES = {
 OUTPUTS={"owner":"制作人", "filename":"自动命名", "number":"序号", "output":"成品链接"}
 
 def normalize(x):return re.sub(r"\s+", "", str(x or "")).lower()
-def key_for(s):
+def key_for(s, aliases=None):
     n=normalize(s)
+    matches=[k for k,values in (aliases or {}).items() if n and n in {normalize(v) for v in values}]
+    if len(matches)>1:raise ValueError(f"表头别名冲突：{s}，请在设置中检查字段映射")
+    if matches:return matches[0]
     for k,vals in ALIASES.items():
         if n in {normalize(v) for v in vals}:return k
+    # Language names are data, not a closed list. Preserve the header as display metadata.
+    if re.search(r'(?:语|语文案|文翻译)$',n) and n not in ('中文','中文文案'):
+        return 'portuguese'
+    if re.fullmatch(r'(?:english|spanish|french|greek)(?:\s*(?:text|copy))?',n):return 'portuguese'
     return None
 
 def date_key(value):
@@ -71,6 +79,7 @@ class Task:
     viral:bool=False
     views_note:str=''
     views_url:str=''
+    language_header:str=''
     @property
     def identity(self):return f"{self.source_id}:{self.sheet}:{self.start_col}:{self.row}"
     @property
@@ -78,19 +87,19 @@ class Task:
     @property
     def available(self):return not self.owner.strip()
 
-def header_index(grid):
+def header_index(grid, aliases=None):
     """Locate a horizontal task header, preserving all original row offsets."""
     for r,row in enumerate(grid[:30]):
-        starts=[c for c,v in enumerate(row) if key_for(v)=='deadline']
+        starts=[c for c,v in enumerate(row) if key_for(v,aliases)=='deadline']
         for i,start in enumerate(starts):
             end=starts[i+1] if i+1<len(starts) else len(row)
-            if any(key_for(v)=='chinese' for v in row[start:end]):return r
+            if any(key_for(v,aliases)=='chinese' for v in row[start:end]):return r
     return None
 
-def parse_sheet(spreadsheet_id, sheet, grid, requester=None):
+def parse_sheet(spreadsheet_id, sheet, grid, requester=None, aliases=None):
     """Parse the horizontal 10-column person groups; row1 category, row2 avatar, row3 headers."""
     out=[]
-    header_row=header_index(grid)
+    header_row=header_index(grid,aliases)
     if header_row is None:
         if any(any(str(v).strip() for v in row) for row in grid):
             raise ValueError(f'工作表「{sheet}」前30行未找到同时包含“截至日期”和“中文”的任务表头，请检查模板')
@@ -98,12 +107,13 @@ def parse_sheet(spreadsheet_id, sheet, grid, requester=None):
     width=max(len(r) for r in grid)
     header=grid[header_row]
     # Identify group starts from deadline headers, not hard-coded A-J/L-U offsets.
-    starts=[i for i,v in enumerate(header) if key_for(v)=='deadline']
+    starts=[i for i,v in enumerate(header) if key_for(v,aliases)=='deadline']
     for group_idx,start in enumerate(starts):
         end=starts[group_idx+1] if group_idx+1<len(starts) else width
         cmap={}
         for c in range(start,min(end,len(header))):
-            k=key_for(header[c])
+            k=key_for(header[c],aliases)
+            if k=='portuguese' and k in cmap:raise ValueError(f'工作表「{sheet}」存在多个外语表头，请通过表头别名消歧后重试')
             if k and k not in cmap:cmap[k]=c
         if not all(k in cmap for k in ('deadline','chinese')):continue
         group_head=(grid[0][start] if start<len(grid[0]) else '')
@@ -118,7 +128,7 @@ def parse_sheet(spreadsheet_id, sheet, grid, requester=None):
             out.append(Task(spreadsheet_id,sheet,r_idx+1,start,person,requester or sheet,
                 get('deadline'),get('chinese'),get('portuguese'),get('image'),get('reference'),
                 get('owner'),get('filename'),get('number'),get('output'),get('progress'),cmap,
-                str(grid[1][start]) if len(grid)>1 and start<len(grid[1]) else '',get('requirements'),get('urgency'),get('views')))
+                str(grid[1][start]) if len(grid)>1 and start<len(grid[1]) else '',get('requirements'),get('urgency'),get('views'), language_header=str(header[cmap['portuguese']]) if 'portuguese' in cmap else ''))
     return out
 
 def allocate_numbers(all_tasks, selected_ids):

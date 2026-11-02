@@ -32,7 +32,7 @@ def test_partial_claim(monkeypatch):
     monkeypatch.setattr(w,'batch_write',write)
     with pytest.raises(ValueError,match='核对日志'):
         w.claim(None,Settings(source_spreadsheet_id='source',production_spreadsheet_id='target'),[t.identity])
-    assert events==['prepared','source_written','needs_review']
+    assert events==['prepared','source_partial_written','source_written','needs_review']
 
 def test_requester_alias_survives_sheet_rename_and_is_written(monkeypatch):
     """Physical sheet names route writes; stable aliases drive generated business names."""
@@ -106,3 +106,73 @@ def test_left_top_insertion_is_bounded_and_batch_ordered(monkeypatch):
     assert req[0]=={'insertRange':{'range':{'sheetId':123,'startRowIndex':1,'endRowIndex':3,'startColumnIndex':0,'endColumnIndex':12},'shiftDimension':'ROWS'}}
     assert {r['updateCells']['start']['rowIndex'] for r in req[1:]}=={1,2}
     assert writes==['source']
+
+
+def test_custom_headers_work_for_production_and_empty_other_group(monkeypatch):
+    headers=['任务日期','内容文案','负责人员','命名结果','任务编号','成品地址']
+    monkeypatch.setattr(w,'read_grid',lambda *a:[headers+headers,[],[]])
+    cfg=Settings(production_layout='left_al',header_aliases={'deadline':['任务日期'],'chinese':['内容文案'],'owner':['负责人员'],'filename':['命名结果'],'number':['任务编号'],'output':['成品地址']})
+    row,cols=w.production_location(None,cfg,task())
+    assert row==2 and cols['owner']==2 and cols['output']==5
+
+
+def test_multiple_sources_same_sheet_name_route_writes(monkeypatch,tmp_path):
+    from zb_studio.config import SourceDocument,SourceSheet
+    from datetime import date
+    from zb_studio import journal
+    monkeypatch.setattr(journal,'path',lambda:tmp_path/'settings.json')
+    one=task('同名');two=task('同名');two.source_id='other'
+    monkeypatch.setattr(w,'load_tasks',lambda *a:[one,two])
+    monkeypatch.setattr(w,'production_location',lambda *a:(4,COLS))
+    monkeypatch.setattr(w,'record',lambda *a:'op')
+    writes=[];monkeypatch.setattr(w,'batch_write',lambda api,doc,data:writes.append((doc,data)))
+    docs=[SourceDocument(spreadsheet_id='source',sheets=[SourceSheet(name='同名',alias='甲',enabled=True)]),SourceDocument(spreadsheet_id='other',sheets=[SourceSheet(name='同名',alias='乙',enabled=True)])]
+    cfg=Settings(producer='小王',production_sheet='制作',production_spreadsheet_id='target',source_documents=docs,download_path=str(tmp_path))
+    result=w.claim(None,cfg,[one.identity,two.identity])
+    assert [x['number'] for x in result]==['01','02']
+    assert {doc for doc,_ in writes[:2]}=={'source','other'} and writes[-1][0]=='target'
+    assert all(len(data)==4 for doc,data in writes[:2])
+
+def test_person_category_written_to_production():
+    cfg=Settings(producer='小王',production_sheet='制作')
+    cols=COLS|{'requester':7,'person':8}
+    _,dest=w.updates_for_task(cfg,task(),'01','名',2,cols)
+    assert any(u['range']=="'制作'!I2" and u['values']==[['长文案']] for u in dest)
+
+
+def test_today_number_continues_from_prior_claim(monkeypatch,tmp_path):
+    from zb_studio import journal
+    from datetime import date
+    monkeypatch.setattr(journal,'path',lambda:tmp_path/'settings.json')
+    existing=task('第一');existing.owner='佳佳';existing.filename='07-ZB-旧-'+date.today().strftime('%Y%m%d')
+    new=task('第二')
+    monkeypatch.setattr(w,'load_tasks',lambda *a:[existing,new])
+    monkeypatch.setattr(w,'production_location',lambda *a:(4,COLS))
+    monkeypatch.setattr(w,'record',lambda *a:'op')
+    monkeypatch.setattr(w,'batch_write',lambda *a:None)
+    result=w.claim(None,Settings(producer='佳佳',production_spreadsheet_id='prod',production_sheet='制作',download_path=str(tmp_path)),[new.identity])
+    assert result[0]['number']=='08' and result[0]['filename'].startswith('08-ZB-')
+
+
+def test_load_multiple_documents_with_same_tab(monkeypatch):
+    from zb_studio.config import SourceDocument,SourceSheet
+    header=['截至日期','中文','制作人']
+    monkeypatch.setattr(w,'read_grid',lambda api,doc,sheet:[['人物'],[],header,['2026-11-02',doc,'']])
+    cfg=Settings(source_documents=[SourceDocument(spreadsheet_id='a',sheets=[SourceSheet(name='同名',alias='甲',enabled=True)]),SourceDocument(spreadsheet_id='b',sheets=[SourceSheet(name='同名',alias='乙',enabled=True)])])
+    tasks=w.load_tasks(None,cfg)
+    assert [(t.source_id,t.requester,t.chinese) for t in tasks]==[('a','甲','a'),('b','乙','b')]
+
+
+def test_claim_order_is_request_order_not_source_or_deadline(monkeypatch,tmp_path):
+    from zb_studio import journal
+    monkeypatch.setattr(journal,'path',lambda:tmp_path/'settings.json')
+    first=task('先领取');first.deadline='2026-12-31'
+    second=task('后领取');second.deadline='2026-01-01'
+    monkeypatch.setattr(w,'load_tasks',lambda *a:[second,first])
+    monkeypatch.setattr(w,'production_location',lambda *a:(4,COLS))
+    monkeypatch.setattr(w,'record',lambda *a:'op')
+    monkeypatch.setattr(w,'batch_write',lambda *a:None)
+    cfg=Settings(producer='佳佳',production_spreadsheet_id='prod',production_sheet='制作',download_path=str(tmp_path))
+    result=w.claim(None,cfg,[first.identity,second.identity])
+    assert [(x['id'],x['number']) for x in result]==[(first.identity,'01'),(second.identity,'02')]
+    assert result[0]['filename'].startswith('01-')

@@ -213,3 +213,76 @@ def test_copy_stats_includes_headers_and_all_visible_rows(window,monkeypatch):
     assert rows[1][0:2]==['表一','甲 人物']
     assert rows[0][6]=='爆帖数量' and '播放量合计' not in rows[0]
     assert rows[1][6]=='1'
+
+
+def test_refresh_replaces_own_claim_with_actual_owner(window):
+    mine=Task('doc','s',4,0,'人物','需求者','2026-10-27','正文',owner='佳佳')
+    other=Task('doc','s',4,0,'人物','需求者','2026-10-27','正文',owner='其他人')
+    window.loaded([mine]);assert window.task_table.cellWidget(0,8) is not None
+    window.loaded([other])
+    assert window.task_table.item(0,7).text()=='其他人'
+    assert window.task_table.item(0,8).text()=='已分配'
+    assert window.task_table.cellWidget(0,8) is None
+    assert not (window.task_table.item(0,0).flags() & Qt.ItemFlag.ItemIsUserCheckable)
+
+def test_header_alias_settings_validate_and_save(window,monkeypatch):
+    import zb_studio.desktop as desktop
+    saved=[];monkeypatch.setattr(desktop,'save_settings',lambda cfg:saved.append(cfg))
+    row=next(r for r in range(window.header_mapping.rowCount()) if window.header_mapping.item(r,0).data(Qt.ItemDataRole.UserRole)=='portuguese')
+    window.header_mapping.item(row,1).setText('外语文案, 葡文')
+    window.save()
+    assert saved[-1].header_aliases['portuguese']==['外语文案','葡文']
+
+
+def test_extra_source_saved_and_roundtrips(window,monkeypatch):
+    import zb_studio.desktop as desktop
+    saved=[];monkeypatch.setattr(desktop,'save_settings',lambda cfg:saved.append(cfg))
+    window.add_extra_source('second','工作表','张三',True,55)
+    window.save()
+    assert saved[-1].source_documents[0].spreadsheet_id=='second'
+    assert saved[-1].source_documents[0].sheets[0].alias=='张三'
+
+
+def test_full_list_shows_continuous_display_indexes(window):
+    tasks=[Task('doc','s',4,i,'人物','需求者','2026-11-02','正文',number='01') for i in (0,10,20)]
+    window.loaded(tasks);window.set_list_mode(True)
+    assert window.task_table.horizontalHeaderItem(1).text()=='列表序号'
+    assert [window.task_table.item(i,1).text() for i in range(3)]==['01','02','03']
+    assert '任务序号：01' in window.task_table.item(1,1).toolTip()
+
+
+@pytest.mark.parametrize('dark',[False,True])
+def test_header_mapping_editor_fits_cell(window,dark):
+    from PySide6.QtWidgets import QLineEdit,QTabWidget
+    window.dark_mode.setChecked(dark);window.navigate(3);window.show()
+    tabs=window.pages.widget(3).findChild(QTabWidget);tabs.setCurrentIndex(1)
+    QApplication.processEvents()
+    mapping=window.header_mapping;mapping.editItem(mapping.item(3,1));QApplication.processEvents()
+    editors=[x for x in mapping.findChildren(QLineEdit) if x.isVisible()]
+    assert len(editors)==1
+    cell=mapping.visualItemRect(mapping.item(3,1))
+    assert editors[0].height()<=cell.height()
+    assert mapping.verticalScrollBar().maximum()==0
+
+
+def test_task_source_type_persists_and_refresh_retains_selection(window,monkeypatch):
+    import zb_studio.desktop as desktop
+    saved=[];monkeypatch.setattr(desktop,'save_settings',lambda cfg:saved.append(cfg))
+    window.fields['source_spreadsheet_id'].setText('doc');window.source_doc='doc'
+    window.add_source('需求','张三',True,10,'image')
+    window.requested_source_doc='doc';window.choose_source_sheet([{'title':'需求','sheetId':10}])
+    assert window.sources.cellWidget(0,3).currentData()=='image'
+    window.add_extra_source('doc2','图片任务','李四',True,20,'image')
+    window.save()
+    assert [d.sheets[0].task_type for d in saved[-1].source_documents]==['image','image']
+
+def test_claim_refresh_shows_real_owner_and_failed_refresh_marks_unknown(window,monkeypatch):
+    from zb_studio.domain import Task
+    monkeypatch.setattr(window,'announce',lambda *_:None)
+    t=Task('doc','s',4,0,'人','甲','2026-11-02','正文')
+    window.loaded([t]);window.claimed({'claimed':[{'id':t.identity}],'failed_downloads':[],'fresh_tasks':None})
+    assert window.task_table.item(0,7).text()=='待刷新'
+    assert window.task_table.cellWidget(0,8) is None
+    actual=Task('doc','s',4,0,'人','甲','2026-11-02','正文',owner='别人')
+    window.loaded([actual]);assert window.task_table.item(0,7).text()=='别人'
+    window.loaded([t]);assert window.task_table.item(0,7).text()==''

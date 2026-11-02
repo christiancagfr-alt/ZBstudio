@@ -18,6 +18,24 @@ if sys.platform=='win32':
     ico=root/'build'/'zb-workflow.ico';ico.parent.mkdir(exist_ok=True)
     if not QIcon(str(root/'zb_workflow_logo.svg')).pixmap(256,256).save(str(ico),'ICO'):raise RuntimeError('Logo conversion failed')
     cmd.extend(['--icon',str(ico)])
+if sys.platform=='darwin':
+    # Finder and Dock use the app bundle's .icns, not its in-window SVG icon.
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtGui import QIcon
+    import tempfile
+    app=QApplication.instance() or QApplication([])
+    icon=QIcon(str(root/'zb_workflow_logo.svg'))
+    build_dir=root/'build';build_dir.mkdir(exist_ok=True)
+    icns=build_dir/'zb-workflow.icns'
+    with tempfile.TemporaryDirectory(prefix='zb-icon-') as temp:
+        iconset=Path(temp)/'ZBStudio.iconset';iconset.mkdir()
+        for logical in (16,32,128,256,512):
+            for scale in (1,2):
+                pixels=logical*scale
+                name=f'icon_{logical}x{logical}'+('@2x' if scale==2 else '')+'.png'
+                if not icon.pixmap(pixels,pixels).save(str(iconset/name),'PNG'):raise RuntimeError('macOS icon conversion failed')
+        subprocess.run(['iconutil','-c','icns',str(iconset),'-o',str(icns)],check=True)
+    cmd.extend(['--icon',str(icns),'--osx-bundle-identifier','com.zbstudio.desktop'])
 if sys.platform.startswith('linux'):cmd.extend(['--collect-all','secretstorage','--collect-all','jeepney'])
 cmd.extend(['--distpath',str(output),'desktop_entry.py'])
 subprocess.run(cmd,cwd=root,check=True)
