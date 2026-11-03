@@ -11,6 +11,7 @@ class SourceSheet(BaseModel):
     task_type:Literal['video','image']='video'
 class SourceDocument(BaseModel):
     spreadsheet_id:str
+    display_name:str=''
     sheets:list[SourceSheet]=Field(default_factory=list)
 
 def source_documents(cfg):

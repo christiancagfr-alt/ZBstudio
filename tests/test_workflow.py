@@ -212,3 +212,35 @@ def test_manual_sequence_checks_existing_production_name(monkeypatch,tmp_path):
     cfg=Settings(producer='佳佳',production_sheet='制作',production_spreadsheet_id='prod',download_path=str(tmp_path),sequence_override=1)
     with pytest.raises(ValueError,match='已有本批自动命名'):w.claim(None,cfg,[t.identity])
     assert not writes
+
+
+def test_hall_edit_matches_production_and_source(monkeypatch):
+    t=task();t.owner='甲';t.filename='unique';t.columns=COLS.copy()
+    monkeypatch.setattr(w,'load_tasks',lambda *a:[t])
+    monkeypatch.setattr(w,'read_grid',lambda *a:[['截至日期','中文','制作人','自动命名','序号','完成进度','成品链接'],['日期','文案','甲','unique','','','']])
+    monkeypatch.setattr(w,'record',lambda *a:'op');monkeypatch.setattr(w,'verify_updates',lambda *a:None)
+    writes=[];monkeypatch.setattr(w,'batch_write',lambda api,doc,data:writes.append((doc,data)))
+    w.edit_task_field(None,Settings(production_spreadsheet_id='prod',production_sheet='制作'),t,'owner','乙')
+    assert [x[0] for x in writes]==['prod','source']
+    assert all(x[1][0]['values']==[['乙']] for x in writes)
+
+def test_hall_edit_rejects_conflicting_production(monkeypatch):
+    t=task();t.owner='甲';t.filename='unique';t.columns=COLS.copy()
+    monkeypatch.setattr(w,'load_tasks',lambda *a:[t])
+    monkeypatch.setattr(w,'read_grid',lambda *a:[['截至日期','中文','制作人','自动命名','序号'],['日期','文案','别人','unique','']])
+    writes=[];monkeypatch.setattr(w,'batch_write',lambda *a:writes.append(a))
+    with pytest.raises(ValueError,match='不一致'):w.edit_task_field(None,Settings(),t,'owner','乙')
+    assert not writes
+
+
+def test_hall_edit_unclaimed_changes_source_only(monkeypatch):
+    t=task();t.columns=COLS.copy()
+    monkeypatch.setattr(w,'load_tasks',lambda *a:[t]);monkeypatch.setattr(w,'record',lambda *a:'op');monkeypatch.setattr(w,'verify_updates',lambda *a:None)
+    writes=[];monkeypatch.setattr(w,'batch_write',lambda api,doc,data:writes.append((doc,data)))
+    w.edit_task_field(None,Settings(),t,'owner','别人')
+    assert len(writes)==1 and writes[0][0]=='source'
+
+def test_hall_edit_blocks_changed_source_and_bad_link(monkeypatch):
+    t=task();other=task();other.owner='新名字';monkeypatch.setattr(w,'load_tasks',lambda *a:[other])
+    with pytest.raises(ValueError,match='已被修改'):w.edit_task_field(None,Settings(),t,'owner','甲')
+    with pytest.raises(ValueError,match='链接'):w.edit_task_field(None,Settings(),t,'output','file:///local/file')

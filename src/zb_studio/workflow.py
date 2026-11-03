@@ -393,3 +393,48 @@ def write_completed(api,cfg,task,url):
     if 'progress' in cols:dest.append({'range':f'{quoted(cfg.production_sheet)}!{a1col(cols["progress"])}{row}','values':[['已完成']]})
     batch_write(api,cfg.production_spreadsheet_id,dest)
     batch_write(api,task.source_id,source)
+
+
+def edit_task_field(api,cfg,expected,field,value,progress=None):
+    """Explicit hall edits use the fresh source row and uniquely matched production record."""
+    if field not in ('owner','progress','output'):raise ValueError('不支持修改该字段')
+    value=str(value).strip()
+    if field=='output' and value:
+        try:parsed=urlsplit(value)
+        except ValueError:raise ValueError('成品链接格式无效')
+        if parsed.scheme not in ('http','https') or not parsed.hostname or parsed.username or parsed.password:raise ValueError('请输入有效的 http 或 https 成品链接')
+    with LOCK:
+        fresh={t.identity:t for t in load_tasks(api,cfg)}.get(expected.identity)
+        if not fresh or (fresh.chinese,fresh.deadline,fresh.person,fresh.filename,fresh.owner,fresh.progress,fresh.output)!=(expected.chinese,expected.deadline,expected.person,expected.filename,expected.owner,expected.progress,expected.output):
+            raise ValueError('任务已被修改或移动，请刷新后重试')
+        if field not in fresh.columns:raise ValueError('需求表缺少对应字段，请先检查表头')
+        source=[{'range':f'{quoted(fresh.sheet)}!{a1col(fresh.columns[field])}{fresh.row}','values':[[value]]}]
+        target=[]
+        if fresh.filename:
+            grid=read_grid(api,cfg.production_spreadsheet_id,cfg.production_sheet);h=header_index(grid,cfg.header_aliases)
+            if h is None:raise ValueError('制作表缺少任务表头，未写入')
+            header=left_header(grid[h],cfg.header_aliases) if cfg.production_layout=='left_al' else grid[h]
+            starts=[c for c,v in enumerate(header) if key_for(v,cfg.header_aliases)=='deadline'];matches=[]
+            for i,start in enumerate(starts):
+                end=starts[i+1] if i+1<len(starts) else len(header)
+                cols={key_for(header[c],cfg.header_aliases):c for c in range(start,end) if key_for(header[c],cfg.header_aliases)}
+                if 'filename' not in cols:continue
+                for r in range(h+1,len(grid)):
+                    if cols['filename']<len(grid[r]) and str(grid[r][cols['filename']]).strip()==fresh.filename:matches.append((r+1,cols,grid[r]))
+            if len(matches)!=1:raise ValueError('制作表无法唯一匹配任务，未写入；请核对自动命名')
+            row,cols,old=matches[0]
+            if field not in cols:raise ValueError('制作表缺少对应字段，未写入')
+            existing=str(old[cols[field]]).strip() if cols[field]<len(old) else ''
+            if existing!=str(getattr(fresh,field) or '').strip():raise ValueError('需求表和制作表该字段不一致，未写入；请先核对两表')
+            target=[{'range':f'{quoted(cfg.production_sheet)}!{a1col(cols[field])}{row}','values':[[value]]}]
+        payload={'task':fresh.__dict__,'field':field,'source_updates':source,'production_updates':target};op=record('manual_edit','prepared',payload)
+        try:
+            if target:
+                batch_write(api,cfg.production_spreadsheet_id,target);record('manual_edit','production_written',payload,op)
+                verify_updates(api,cfg.production_spreadsheet_id,target)
+            batch_write(api,fresh.source_id,source);verify_updates(api,fresh.source_id,source)
+            record('manual_edit','complete',payload,op)
+        except Exception as e:
+            payload['error']=str(e);record('manual_edit','needs_review',payload,op)
+            raise ValueError(f'修改未完整完成，请查看操作记录 {op} 并核对表格') from e
+        return fresh.identity

@@ -151,7 +151,7 @@ def test_select_all_and_status_buttons_refresh(window):
     assert not window.task_table.item(1,0).flags() & Qt.ItemFlag.ItemIsUserCheckable
     assert window.task_table.cellWidget(0,8) is not None
     a.owner='别人';window.refresh_table()
-    assert window.task_table.cellWidget(0,8) is None
+    assert window.task_table.cellWidget(0,8).currentText()=='制作中'
 
 def test_compact_layout_and_silent_notifications(window,monkeypatch):
     window.resize(1024,640);window.show();QApplication.processEvents()
@@ -222,7 +222,7 @@ def test_refresh_replaces_own_claim_with_actual_owner(window):
     window.loaded([other])
     assert window.task_table.item(0,7).text()=='其他人'
     assert window.task_table.item(0,8).text()=='已分配'
-    assert window.task_table.cellWidget(0,8) is None
+    assert window.task_table.cellWidget(0,8).currentText()=='制作中'
     assert not (window.task_table.item(0,0).flags() & Qt.ItemFlag.ItemIsUserCheckable)
 
 def test_header_alias_settings_validate_and_save(window,monkeypatch):
@@ -255,7 +255,7 @@ def test_full_list_shows_continuous_display_indexes(window):
 def test_header_mapping_editor_fits_cell(window,dark):
     from PySide6.QtWidgets import QLineEdit,QTabWidget
     window.dark_mode.setChecked(dark);window.navigate(3);window.show()
-    tabs=window.pages.widget(3).findChild(QTabWidget);tabs.setCurrentIndex(1)
+    tabs=window.pages.widget(3).findChild(QTabWidget);tabs.setCurrentIndex(0)
     QApplication.processEvents()
     mapping=window.header_mapping;mapping.editItem(mapping.item(3,1));QApplication.processEvents()
     editors=[x for x in mapping.findChildren(QLineEdit) if x.isVisible()]
@@ -327,3 +327,66 @@ def test_fold_state_persisted(window,monkeypatch):
     window.extra_group.setCurrentIndex(window.extra_group.findData('doc'));window.toggle_extra_sources()
     window.toggle_primary_sources();window.save()
     assert saved[-1].collapsed_source_ids==['doc'] and saved[-1].primary_source_collapsed
+
+
+def test_source_filter_only_shows_selected_source(window):
+    from zb_studio.config import SourceDocument,SourceSheet
+    window.cfg.source_documents=[SourceDocument(spreadsheet_id='a',display_name='来源甲',sheets=[SourceSheet(name='a',alias='甲',enabled=True)]),SourceDocument(spreadsheet_id='b',display_name='来源乙',sheets=[SourceSheet(name='b',alias='乙',enabled=True)])]
+    a=Task('a','a',4,0,'人','甲','2026-11-03','A');b=Task('b','b',4,0,'人','乙','2026-11-03','B')
+    window.loaded([a,b]);window.source_filter.setCurrentIndex(window.source_filter.findData('b'))
+    assert len(window.visible)==1 and window.visible[0].identity==b.identity
+    assert window.source_filter.currentText()=='来源乙'
+
+
+def test_progress_dropdown_and_inline_owner(window):
+    from PySide6.QtWidgets import QComboBox
+    task=Task('doc','s',4,0,'人物','甲','2026-11-03','文案',owner='佳佳',filename='test',progress='制作中')
+    window.loaded([task]);box=window.task_table.cellWidget(0,8)
+    assert isinstance(box,QComboBox) and box.currentText()=='制作中'
+    assert window.task_table.item(0,7).flags() & Qt.ItemFlag.ItemIsEditable
+    assert window.task_table.columnCount()==13
+    assert not window.task_table.item(0,10).flags() & Qt.ItemFlag.ItemIsEditable
+
+def test_batch_completion_allows_manual_filename_difference(monkeypatch):
+    from zb_studio import registration
+    task=Task('doc','s',4,0,'人物','甲','2026-11-03','文案',owner='佳佳',filename='期望名称')
+    file={'id':'abc','name':'不同名称.mp4','url':'https://drive.google.com/file/d/abc/view'}
+    monkeypatch.setattr(service,'services',lambda:(None,None));monkeypatch.setattr(service,'load_tasks',lambda *a:[task])
+    monkeypatch.setattr(registration,'validate',lambda *a:None);monkeypatch.setattr(registration,'preflight',lambda *a:None)
+    monkeypatch.setattr(service,'resolve_drive_link',lambda *a:{'id':'abc','name':'不同名称.mp4','mimeType':'video/mp4'})
+    calls=[];monkeypatch.setattr(service,'finalize_completion',lambda sheets,cfg,t,url,*a:calls.append((t.identity,url)))
+    assert service.confirm_completion_pairs(Settings(producer='佳佳'),[(task,file)],lambda _:None)==1
+    assert calls==[(task.identity,file['url'])]
+
+def test_batch_completion_rejects_duplicates_before_writes(monkeypatch):
+    from zb_studio import registration
+    t1=Task('doc','s',4,0,'人','甲','2026-11-03','a',owner='佳佳',filename='a')
+    t2=Task('doc','s',5,0,'人','甲','2026-11-03','b',owner='佳佳',filename='b')
+    file={'id':'abc','name':'file.mp4','url':'https://drive.google.com/file/d/abc/view'}
+    monkeypatch.setattr(service,'services',lambda:(None,None));monkeypatch.setattr(service,'load_tasks',lambda *a:[t1,t2])
+    monkeypatch.setattr(registration,'validate',lambda *a:None);monkeypatch.setattr(registration,'preflight',lambda *a:None)
+    monkeypatch.setattr(service,'resolve_drive_link',lambda *a:{'id':'abc','name':'file.mp4','mimeType':'video/mp4'})
+    writes=[];monkeypatch.setattr(service,'finalize_completion',lambda *a:writes.append(a))
+    with pytest.raises(ValueError,match='重复'):service.confirm_completion_pairs(Settings(producer='佳佳'),[(t1,file),(t2,file)],lambda _:None)
+    assert not writes
+
+
+def test_progress_dropdown_column_has_readable_width(window):
+    task=Task('doc','s',4,0,'人','甲','2026-11-03','文案',owner='佳佳',progress='制作中')
+    window.loaded([task]);box=window.task_table.cellWidget(0,8)
+    assert window.task_table.columnWidth(8)>=120
+    assert box.currentText()=='制作中'
+
+
+def test_hall_completion_skips_registration_even_if_configured(monkeypatch):
+    from zb_studio import registration
+    task=Task('doc','s',4,0,'人','甲','2026-11-03','文案',owner='佳佳',filename='name')
+    file={'id':'abc','name':'name.mp4','url':'https://drive.google.com/file/d/abc/view'}
+    monkeypatch.setattr(service,'services',lambda:(None,None));monkeypatch.setattr(service,'load_tasks',lambda *a:[task])
+    monkeypatch.setattr(service,'resolve_drive_link',lambda *a:{'id':'abc','name':'name.mp4','mimeType':'video/mp4'})
+    def unexpected(*a,**k):raise AssertionError('hall flow must not inspect registration sheet')
+    monkeypatch.setattr(registration,'preflight',unexpected)
+    configs=[];monkeypatch.setattr(service,'finalize_completion',lambda sheets,cfg,*a:configs.append(cfg))
+    cfg=Settings(producer='佳佳',register_spreadsheet_id='extra',register_sheet='登记')
+    assert service.confirm_completion_pairs(cfg,[(task,file)],lambda _:None)==1
+    assert configs[0].register_spreadsheet_id=='' and cfg.register_spreadsheet_id=='extra'

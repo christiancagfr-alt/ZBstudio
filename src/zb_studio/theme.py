@@ -51,6 +51,7 @@ QTabBar::tab:selected{color:#0879ff;border-bottom:2px solid #0879ff;font-weight:
 QStatusBar{background:#fff;color:#8190a5;border-top:1px solid #e9eef5;font-size:12px;}
 QComboBox{padding:6px 28px 6px 10px;min-height:24px;}
 QComboBox::drop-down{width:22px;subcontrol-origin:padding;subcontrol-position:top right;border:0;}
+QComboBox#taskProgress{padding:4px 22px 4px 8px;min-height:20px;}
 QWidget#cardShelf,QWidget#uploadContent{background:#f5f7fb;}
 QChartView{background:#f5f7fb;border:0;}
 '''

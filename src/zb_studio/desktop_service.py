@@ -214,3 +214,44 @@ def upload_files(cfg,paths,progress):
         finalize_completion(sheets,cfg,t,url,duration,record_date)
         progress(f'{i+1}/{len(plan)} 已完成 {p.name}')
     return len(plan)
+
+
+def edit_task(cfg,task,field,value,progress):
+    from .workflow import edit_task_field
+    progress('正在核验并保存任务修改…')
+    sheets,_=services();edit_task_field(sheets,cfg,task,field,value,progress)
+    return load_tasks(sheets,cfg,progress,include_metrics=True)
+
+
+def inspect_completion_links(text,progress):
+    """Resolve every pasted file URL using the user's authorized Drive session."""
+    links=re.findall(r'https://[^\s<>"\']+',text or '')
+    if not links:raise ValueError('请粘贴 Google Drive 文件链接，每行一个')
+    _,drive=services();items=[];seen=set()
+    for i,link in enumerate(links):
+        progress(f'正在读取云端文件 {i+1}/{len(links)}…')
+        file=resolve_drive_link(drive,link.rstrip('),，；;'))
+        if file.get('mimeType')=='application/vnd.google-apps.folder':raise ValueError('请粘贴文件链接，不要粘贴文件夹链接')
+        if file['id'] in seen:raise ValueError('同一云端文件重复粘贴：'+file['name'])
+        seen.add(file['id']);items.append({'id':file['id'],'name':file['name'],'url':link.rstrip('),，；;'),'duration':file.get('videoMediaMetadata',{}).get('durationMillis')})
+    return items
+
+def confirm_completion_pairs(cfg,pairs,progress):
+    """Explicit user pairing may differ in filename; still check task and Drive identity."""
+    # This hall workflow intentionally does not write the optional registration sheet.
+    cfg=cfg.model_copy(update={'register_spreadsheet_id':'','register_sheet':''},deep=True)
+    sheets,drive=services()
+    fresh={t.identity:t for t in load_tasks(sheets,cfg)};plan=[];seen_tasks=set();seen_files=set()
+    for expected,item in pairs:
+        task=fresh.get(expected.identity)
+        if not task or (task.owner,task.filename,task.output,task.chinese,task.deadline,task.person)!=(expected.owner,expected.filename,expected.output,expected.chinese,expected.deadline,expected.person):raise ValueError('任务已变化，请刷新并重新校对')
+        if not task.filename or task.owner!=cfg.producer or task.output:raise ValueError('只能回填当前制作人已领取且未完成的任务')
+        if task.identity in seen_tasks or item['id'] in seen_files:raise ValueError('任务或云端文件重复，请调整后重试')
+        file=resolve_drive_link(drive,item['url'])
+        if file['id']!=item['id'] or file['name']!=item['name'] or file.get('mimeType')=='application/vnd.google-apps.folder':raise ValueError('云端文件已更名或发生变化，请重新读取并校对')
+        seen_tasks.add(task.identity);seen_files.add(item['id']);plan.append((task,item,file))
+    for i,(task,item,file) in enumerate(plan):
+        progress(f'正在回填 {i+1}/{len(plan)}：{task.filename}')
+        try:finalize_completion(sheets,cfg,task,item['url'],file.get('videoMediaMetadata',{}).get('durationMillis'),completion_date(cfg,[]) if cfg.register_spreadsheet_id else None)
+        except Exception as e:raise ValueError(f'已完成 {i}/{len(plan)} 条；第 {i+1} 条未完整回填。请查看操作记录并核对后重试。{e}') from e
+    return len(plan)
